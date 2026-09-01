@@ -1,0 +1,15 @@
+# Mac files
+.DS_Store
+
+# Python temporary files
+__pycache__/
+*.py[cod]
+
+# Generated release files and logs
+dist/
+runs/
+recovery-run-*/
+
+# Private files used to assemble a release ZIP
+release-inputs/*
+!release-inputs/README.md

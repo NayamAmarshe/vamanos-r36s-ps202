@@ -1,0 +1,85 @@
+{
+  "schema": 1,
+  "id": "PS202_00001",
+  "product": "vamanOS for R36S PS202",
+  "identity": {
+    "manufacturer": "TICHIPS",
+    "model": "PS202",
+    "build_id": "PS202_00001",
+    "android_release": "4.4.2",
+    "abi": "armeabi-v7a"
+  },
+  "block_device": "/dev/block/mmcblk0",
+  "regions": {
+    "boot": {
+      "offset": 30932992,
+      "length": 6291456,
+      "stock_sha256": "1bbc46ff83da7c952ca527591a675a8030b1b837963499b1b7b0a9015c42b6ec",
+      "patched_sha256": "abe727c593688c2193f2767a706173851e69fdd2e66c6ef22da523166d635ed1"
+    }
+  },
+  "android_boot_splash": {
+    "path": "/system/media/bootanimation.zip",
+    "backup_path": "/system/media/bootanimation.zip.vamanos-previous",
+    "mode": "0644",
+    "owner": "0:0",
+    "description": "Android userspace boot animation; the installer replaces this file instead of writing the raw MTK logo region."
+  },
+  "preserve_system_files": [
+    "/system/usr/keylayout/mtk-kpd.kl"
+  ],
+  "debloat": {
+    "backup_path": "/storage/sdcard1/ps202/backups/apps",
+    "disable": [
+      "com.android.printspooler",
+      "com.android.providers.telephony",
+      "com.android.stk",
+      "com.mediatek.apst.target",
+      "com.mediatek.lbs.em",
+      "com.mediatek.omacp",
+      "com.mediatek.ppl",
+      "com.mediatek.schpwronoff",
+      "com.mediatek.smsreg",
+      "com.mediatek.voicecommand",
+      "com.mediatek.voiceunlock",
+      "com.rock.gota"
+    ],
+    "remove": [
+      "com.ps202.shell",
+      "com.digdroid.alman.dig",
+      "com.estrongs.android.pop",
+      "com.htetznaing.kingroot2",
+      "com.xugame.gameconsoleMenu",
+      "nl.frankkie.ouyalauncher",
+      "org.openintents.filemanager",
+      "ru.zdevs.zarchiver"
+    ],
+    "protected": [
+      "com.android.systemui",
+      "com.android.settings",
+      "com.android.providers.settings",
+      "com.android.bluetooth",
+      "com.android.providers.media",
+      "com.android.externalstorage",
+      "com.android.inputdevices",
+      "com.android.phone",
+      "com.mediatek.batterywarning",
+      "com.mediatek.bluetooth",
+      "com.mediatek.thermalmanager",
+      "com.ps202.emulationstation",
+      "com.xugame.gameconsole",
+      "com.retroarch.ra32",
+      "org.ppsspp.ppsspp"
+    ]
+  },
+  "notes": [
+    "Boot region: only the 6 MiB boot region at offset 0x1D80000 is ever written for root ADB; read back and SHA-256 verified before reboot.",
+    "Android boot splash: /system/media/bootanimation.zip is backed up, replaced, and pulled back for SHA-256 verification.",
+    "The raw MTK logo region at offset 0x2A40000 is intentionally never written by the installer.",
+    "Preloader, lk/uboot, nvram, secro, protect_* and the whole flash are never written.",
+    "Before removal, each present package APK is copied to the SD backup path and host run directory; app data is copied when SELinux permits, otherwise pm uninstall -k retains it in place. Removal is refused if the APK backup marker cannot be created.",
+    "com.xugame.gameconsole is the retained emulator and must never be removed or disabled.",
+    "The stock controller map /system/usr/keylayout/mtk-kpd.kl is preserved byte-for-byte; no ES input map is cleared or regenerated.",
+    "No 'pm clear' and no user data (ROMs, saves, states, input maps) is touched."
+  ]
+}

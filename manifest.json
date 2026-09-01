@@ -1,0 +1,127 @@
+{
+  "schema": 1,
+  "product": "vamanOS for R36S PS202",
+  "manifest_version": "1.0.6",
+  "device_profile": "device-profile.json",
+  "payload": {
+    "init_script": "payload/ps202-init.sh",
+    "boot_helper": "payload/ps202-boot.sh",
+    "performance_profile": "payload/ps202-performance.sh",
+    "launcher_config": "payload/android_launchers.xml",
+    "retroarch_baseline": "payload/retroarch-baseline.cfg"
+  },
+  "artifacts": {
+    "emulationstation": {
+      "source": "../../ps202-batocera-es/build/ps202-emulationstation.apk",
+      "package": "com.ps202.emulationstation",
+      "sha256": "f9aefe9d2b941e50b3f210f14271f072bf6b1aec8df3e03c06dcb101090087c5"
+    },
+    "retroarch": {
+      "source": "../../tools/retroarch-ra32-120.apk",
+      "package": "com.retroarch.ra32",
+      "sha256": "cbcf1cf1aac3e9afe447051cae12ee069039dbc22132d92af856cab26cae45df"
+    },
+    "ppsspp": {
+      "source": "release-inputs/apks/ppsspp.apk",
+      "package": "org.ppsspp.ppsspp",
+      "sha256": "7966aa710096898849397eaa24006736e3064869f22af280db40b00c7b158775"
+    },
+    "su": {
+      "source": "release-inputs/bin/su",
+      "on_device": "/system/xbin/su",
+      "mode": "6755",
+      "owner": "0:0",
+      "sha256": "48bdf38db21c5df508120184dd662240e52ba0803ab659e527873012afc16aee"
+    },
+    "patched_adbd": {
+      "source": "../../ps202-project/binaries/patched-adbd/adbd",
+      "sha256": "a4eaf7436f9140ec5c5b18f96d570e5b2ef80f62567f873e4987d159e80ac740"
+    },
+    "find": {
+      "source": "../../ps202-project/binaries/find/find",
+      "on_device": "/system/xbin/find",
+      "mode": "0755",
+      "owner": "0:0",
+      "sha256": "8fceda57d83418bb288de0aef3c6df5e9421344ed0515c90fa5206f15c50f7e4"
+    },
+    "temproot_cowtest": {
+      "source": "release-inputs/touchbridge/cowtest",
+      "fallback": [
+        "payload/bin/cowtest",
+        "../../tools/touchbridge/build/android-root-poc/libs/armeabi-v7a/cowtest"
+      ],
+      "sha256": "da2884341bd32ad78f510f2db21d9b2aedae2b2707f997b9dd57127e487f76fa"
+    },
+    "temproot_blockdump": {
+      "source": "release-inputs/touchbridge/runas-blockdump",
+      "fallback": [
+        "payload/bin/runas-blockdump",
+        "../../tools/touchbridge/build/android-root-poc/libs/armeabi-v7a/runas-blockdump"
+      ],
+      "sha256": "0f17354c875aa6a38db1a4a6f7475712810e234a72e6f1450e799585c457aff0"
+    },
+    "boot_stock": {
+      "source": "../../ps202-project/backups/boot-images/boot-stock.img",
+      "sha256": "1bbc46ff83da7c952ca527591a675a8030b1b837963499b1b7b0a9015c42b6ec"
+    },
+    "boot_patched": {
+      "source": "../../ps202-project/firmware/boot-adbd-root-v2.img",
+      "sha256": "abe727c593688c2193f2767a706173851e69fdd2e66c6ef22da523166d635ed1"
+    },
+    "android_bootanimation": {
+      "source": "payload/android_bootanimation.zip",
+      "sha256": "e48925fbef10fa727d1879de7dc870f99e0f1a14bf2e9faf0b66a4339471d326",
+      "source_video_name": "vamanos_boot.mp4",
+      "source_video_sha256": "b9179a6bbdbcf40ec65cecbb0ffee418ca062630a043a218a9b151165d5fe177",
+      "source_video_duration_seconds": 8.362667,
+      "output_resolution": "640x480",
+      "output_fps": 15,
+      "reveal_frame_count": 124,
+      "audio_included": false
+    },
+    "cody_theme": {
+      "source": "release-inputs/themes/EPIC-CODY.zip",
+      "device_path": "/storage/sdcard1/ps202/themes/EPIC-CODY.zip",
+      "sha256": "b899d6ef9af5afc44b364d809f09362936f12fe51bdeb5c3f5f5dfe91a38155b",
+      "format_version": 7
+    }
+  },
+  "cores": {
+    "fceumm": "fceumm_libretro_android.so",
+    "snes9x": "snes9x_libretro_android.so",
+    "gambatte": "tgbdual_libretro_android.so",
+    "gpsp": "gpsp_libretro_android.so",
+    "mgba": "mgba_libretro_android.so",
+    "pcsx_rearmed": "pcsx_rearmed_libretro_android.so",
+    "picodrive": "picodrive_libretro_android.so"
+  },
+  "core_sources": [
+    "release-inputs/cores-api19",
+    "release-inputs/cores",
+    "../../tools/cores-x"
+  ],
+  "sd_layout": [
+    "ps202/bios",
+    "ps202/roms/nes",
+    "ps202/roms/snes",
+    "ps202/roms/genesis",
+    "ps202/roms/gb",
+    "ps202/roms/gbc",
+    "ps202/roms/gba",
+    "ps202/roms/psx",
+    "ps202/roms/psp",
+    "ps202/saves",
+    "ps202/states",
+    "ps202/screenshots",
+    "ps202/themes",
+    "ps202/media/images",
+    "ps202/media/videos",
+    "ps202/configs",
+    "ps202/logs",
+    "retroarch/cores",
+    "retroarch/autoconfig",
+    "retroarch/info",
+    "PSP/SAVEDATA",
+    "PSP/PPSSPP/STATE"
+  ]
+}

@@ -60,6 +60,7 @@ CONFIRM_RE = re.compile(r"^[a-zA-Z0-9]{4,40}$")
 # launcher XML for ROM + LIBRETRO + the PSP shortcut.
 RADIR_SD = "/storage/sdcard1/retroarch/cores"
 RADIR_PRIVATE = "/data/data/com.retroarch.ra32/cores"
+PPSSPP_PACKAGE = "org.ppsspp.ppsspp"
 
 
 class InstallerError(RuntimeError):
@@ -526,7 +527,8 @@ class VamanOSInstaller:
             found[short] = path
         return found
 
-    def validate_install_artifacts(self, boot_mode: str) -> None:
+    def validate_install_artifacts(self, boot_mode: str,
+                                   require_ppsspp: bool = True) -> None:
         """Resolve every file needed by install before requesting confirmation.
 
         This is deliberately host-only. The install plan must fail before any
@@ -535,8 +537,10 @@ class VamanOSInstaller:
         """
         required = [
             "android_bootanimation", "su", "find", "emulationstation",
-            "retroarch", "ppsspp", "cody_theme",
+            "retroarch", "cody_theme",
         ]
+        if require_ppsspp:
+            required.append("ppsspp")
         if boot_mode in ("force", "temproot"):
             required.append("boot_patched")
         if boot_mode == "temproot":
@@ -994,8 +998,12 @@ class VamanOSInstaller:
             apk = self.art(key)
             self.msg(f"  installing {key} ({apk.stat().st_size // (1024*1024)} MiB)")
             self.adb.install_apk(apk)
-        self.msg("  installing ppsspp")
-        self.adb.install_apk(self.art("ppsspp"))
+        if self.adb.package_path(PPSSPP_PACKAGE):
+            self.msg("  keeping existing ppsspp")
+            return
+        apk = self.art("ppsspp")
+        self.msg(f"  installing ppsspp ({apk.stat().st_size // (1024*1024)} MiB)")
+        self.adb.install_apk(apk)
 
     def verify(self, require_root: bool = True) -> None:
         if self.dry_run:
@@ -1103,6 +1111,7 @@ class VamanOSInstaller:
         self.print_identity()
         pre = self.preflight(boot_mode=boot_mode)
         root = pre["root_adb"]
+        ppsspp_present = None if self.dry_run else bool(self.adb.package_path(PPSSPP_PACKAGE))
 
         if self.known:
             if boot_mode == "auto":
@@ -1132,7 +1141,7 @@ class VamanOSInstaller:
         # Resolve all files used by the install before asking for the
         # destructive confirmation token. This prevents a late missing-APK or
         # missing-core failure after boot/system files have already changed.
-        self.validate_install_artifacts(boot_mode)
+        self.validate_install_artifacts(boot_mode, require_ppsspp=ppsspp_present is not True)
 
         # Plan
         self.msg("\n=== vamanOS install plan ===")
@@ -1141,7 +1150,9 @@ class VamanOSInstaller:
             "2. Install Android boot splash (/system/media/bootanimation.zip; no raw logo-region write)",
             "3. Install /system/xbin/su + /system/xbin/find (root)",
             "4. Deploy PS202 boot helper + performance profile (/data/local/)",
-            "5. Install ES, RetroArch, PPSSPP APKs (PS202 Shell is removed)",
+            ("5. Install ES + RetroArch; keep the existing PPSSPP app"
+             if ppsspp_present is True else
+             "5. Install ES + RetroArch; install bundled PPSSPP only if missing"),
             "6. Install RetroArch cores + V2 CODY theme + tune shared config (preserves input bindings)",
             "7. Back up removable apps, deploy launcher map + PS202 SD layout",
             "8. Remove old apps/game launcher + set ES as HOME",

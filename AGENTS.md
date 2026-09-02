@@ -44,6 +44,8 @@ for the same steps.
   reset the controller map.
 - Do not delete the user's ROMs, saves, states, screenshots, or input maps.
 - Keep the vendor emulator installed.
+- Keep an existing `org.ppsspp.ppsspp` installation. Install the bundled
+  PPSSPP APK only when that package is missing.
 - If the installer stops, read the error and report it. Do not blindly retry.
 - If the handheld is stuck during startup, run `./recover-bootloop.sh doctor`
   first. It is read-only.
@@ -55,8 +57,10 @@ for the same steps.
 - `device-profile.json` describes the supported PS202.
 - `payload/` contains the installer files that are safe to ship.
 - `tests/` contains host tests.
-- `release-inputs/` contains private files used to build a release ZIP. Do not
-  publish its contents.
+- `release-inputs/` contains the public runtime files used to build a release
+  ZIP. Keep its APKs, cores, theme, and helper binaries in the repository.
+- Do not put ROMs, saves, device backups, credentials, or diagnostic captures
+  in the repository.
 
 If changing the installer, manifest, profile, or payload, run:
 

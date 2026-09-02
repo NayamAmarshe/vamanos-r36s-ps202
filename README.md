@@ -69,10 +69,13 @@ the install is finished.
 vamanOS adds:
 
 - A game menu
-- RetroArch and PPSSPP
+- RetroArch and the PS202's PPSSPP app
 - Game cores and the CODY theme
 - Root ADB and the small tools vamanOS needs
 - Faster startup and game loading
+
+The installer keeps the PPSSPP app already on the handheld. It installs the
+bundled PPSSPP only when PPSSPP is missing.
 
 Your games, saves, screenshots, and controller settings are kept.
 

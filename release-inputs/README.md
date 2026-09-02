@@ -1,17 +1,20 @@
-# vamanOS for R36S PS202 — private release inputs
+# vamanOS for R36S PS202 — release inputs
 
 Made by Nayam Amarshe.
 
-This directory is intentionally ignored by Git. It holds legally obtained,
-checksum-pinned runtime inputs that the installer re-distributes but which
-must be assembled per user (they are third-party / device-owned binaries).
+This directory is part of the public installer. It holds checksum-pinned
+runtime inputs used to assemble a release ZIP. The project owner has confirmed
+that these files may be published with vamanOS. Keep the matching license and
+copyright information with the release. The installer keeps an existing PS202
+PPSSPP and uses this bundled copy only as a fallback when PPSSPP is missing.
 
 ## Contents
 
 - `bin/su` — the live `/system/xbin/su` fetched from the reference device
   (SHA-256 `48bdf38d…`). Used for step 3 of the install.
-- `apks/ppsspp.apk` — the stock `org.ppsspp.ppsspp` APK (from the reference
-  vendor partition, SHA-256 `7966aa71…`). Its `manifest.json` source is this
+- `apks/ppsspp.apk` — a fallback `org.ppsspp.ppsspp` APK (from the reference
+  vendor partition, SHA-256 `7966aa71…`). It is installed only when the
+  handheld does not already have PPSSPP. Its `manifest.json` source is this
   release-input path.
 - `cores-api19/` — the ARMv7/API-19-compatible cores staged for the
   RetroArch launch map. These are extracted from the pinned factory

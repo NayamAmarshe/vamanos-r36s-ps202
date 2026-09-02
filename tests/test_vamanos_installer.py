@@ -216,6 +216,40 @@ class AdbClientTests(unittest.TestCase):
         self.assertIn("get-serialno", runner.args)
 
 
+class AppInstallTests(unittest.TestCase):
+    def _installer(self, directory, ppsspp_present):
+        installed = []
+
+        class FakeAdb:
+            def package_path(self, package):
+                if package == inst.PPSSPP_PACKAGE and ppsspp_present:
+                    return "/data/app/org.ppsspp.ppsspp-1.apk"
+                return None
+
+            def install_apk(self, apk, timeout=1200):
+                installed.append(Path(apk).name)
+
+        installer = inst.VamanOSInstaller.__new__(inst.VamanOSInstaller)
+        installer.adb = FakeAdb()
+        installer.msg = lambda *args, **kwargs: None
+        installer.art = lambda key: Path(directory) / f"{key}.apk"
+        for key in ("emulationstation", "retroarch", "ppsspp"):
+            (Path(directory) / f"{key}.apk").write_bytes(b"apk")
+        return installer, installed
+
+    def test_keeps_existing_ppsspp(self):
+        with tempfile.TemporaryDirectory() as directory:
+            installer, installed = self._installer(directory, ppsspp_present=True)
+            installer.install_apks()
+        self.assertEqual(["emulationstation.apk", "retroarch.apk"], installed)
+
+    def test_installs_bundled_ppsspp_when_missing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            installer, installed = self._installer(directory, ppsspp_present=False)
+            installer.install_apks()
+        self.assertEqual(["emulationstation.apk", "retroarch.apk", "ppsspp.apk"], installed)
+
+
 class CoreInstallTests(unittest.TestCase):
     def test_cores_are_kept_on_sd_and_pushed_into_private_runtime_dir(self):
         pushes = []
@@ -379,6 +413,17 @@ class FactoryTemprootTests(unittest.TestCase):
             set(resolved),
         )
         self.assertEqual({"boot_helper", "performance_profile", "launcher_config", "retroarch_baseline"}, set(payloads))
+
+    def test_existing_ppsspp_can_skip_bundled_apk_preflight(self):
+        resolved = []
+        installer = inst.VamanOSInstaller.__new__(inst.VamanOSInstaller)
+        installer.art = lambda key: resolved.append(key) or Path("/tmp/" + key)
+        installer.core_files = lambda: {"fceumm": Path("/tmp/fceumm.so")}
+        installer.payload_file = lambda key: Path("/tmp/" + key)
+
+        installer.validate_install_artifacts("skip", require_ppsspp=False)
+
+        self.assertNotIn("ppsspp", resolved)
 
     def test_preflight_does_not_read_boot_before_temproot(self):
         class FactoryAdb:

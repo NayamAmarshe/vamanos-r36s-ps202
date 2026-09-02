@@ -9,7 +9,3 @@ __pycache__/
 dist/
 runs/
 recovery-run-*/
-
-# Private files used to assemble a release ZIP
-release-inputs/*
-!release-inputs/README.md

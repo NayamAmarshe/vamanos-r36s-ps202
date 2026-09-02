@@ -421,6 +421,23 @@ class AdbClientTests(unittest.TestCase):
         self.assertIn("install", calls[0])
         self.assertIn("/tmp/a.apk", calls[0])
 
+    def test_can_install_large_apk_directly_to_sd(self):
+        calls = []
+
+        class RecordingRunner(inst.HostRunner):
+            def run(self, args, timeout=120, check=True, binary=False):
+                calls.append(list(args))
+                if "shell" in args and "pm install" in args[-1]:
+                    return inst.CommandResult(0, "Success\n", "")
+                return inst.CommandResult(0, "", "")
+
+        client = inst.AdbClient("adb", "SERIAL", RecordingRunner())
+        client.install_apk(Path("/tmp/retroarch.apk"), to_sd=True)
+        self.assertIn("push", calls[0])
+        self.assertIn("-s", calls[1][-1])
+        self.assertIn("pm install", calls[1][-1])
+        self.assertIn("rm -f", calls[2][-1])
+
     def test_reads_serial_for_confirmation_when_available(self):
         class RecordingRunner(inst.HostRunner):
             def run(self, args, timeout=120, check=True, binary=False):
@@ -527,8 +544,11 @@ class AppInstallTests(unittest.TestCase):
                     return "/data/app/org.ppsspp.ppsspp-1.apk"
                 return None
 
-            def install_apk(self, apk, timeout=1200):
-                installed.append(Path(apk).name)
+            def package_is_on_sd(self, package):
+                return False
+
+            def install_apk(self, apk, timeout=1200, to_sd=False):
+                installed.append((Path(apk).name, to_sd))
 
         installer = inst.VamanOSInstaller.__new__(inst.VamanOSInstaller)
         installer.adb = FakeAdb()
@@ -543,14 +563,21 @@ class AppInstallTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             installer, installed = self._installer(directory, ppsspp_present=True)
             installer.install_apks()
-        self.assertEqual(["emulationstation.apk", "retroarch.apk"], installed)
+        self.assertEqual(
+            [("emulationstation.apk", False), ("retroarch.apk", True)], installed
+        )
 
     def test_installs_bundled_ppsspp_when_missing(self):
         with tempfile.TemporaryDirectory() as directory:
             installer, installed = self._installer(directory, ppsspp_present=False)
             installer.install_apks()
         self.assertEqual(
-            ["emulationstation.apk", "retroarch.apk", "ppsspp.apk"], installed
+            [
+                ("emulationstation.apk", False),
+                ("retroarch.apk", True),
+                ("ppsspp.apk", False),
+            ],
+            installed,
         )
 
     def test_skips_exact_existing_es_and_retroarch(self):
@@ -559,6 +586,7 @@ class AppInstallTests(unittest.TestCase):
             installer.installed_package_matches = lambda key: (
                 key in {"emulationstation", "retroarch"}
             )
+            installer.adb.package_is_on_sd = lambda package: True
             installer.install_apks()
         self.assertEqual([], installed)
 

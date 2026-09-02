@@ -58,6 +58,9 @@ separate `RESTORE-...` confirmation and removes root ADB by design.
   PPSSPP APK only when that package is missing.
 - Download RetroArch only from the pinned URL in `manifest.json`. Verify its
   SHA-256 before installing it; do not replace it with a newer build.
+- Install RetroArch on the SD card with the legacy `-s` path. Do not
+  stage its large APK in `/data/local/tmp`, because that can fill the small
+  `/data` partition. Keep its `/data/data/com.retroarch.ra32` settings.
 - If the installer stops, read the error and report it. Do not blindly retry.
 - If the handheld is stuck during startup, run `./recover-bootloop.sh doctor`
   first. It is read-only.

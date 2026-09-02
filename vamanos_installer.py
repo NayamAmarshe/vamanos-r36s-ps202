@@ -330,8 +330,40 @@ class AdbClient:
         )
         return result.returncode == 0
 
-    def install_apk(self, apk: Path, timeout: int = 1200) -> None:
-        self.run(["install", "-r", "-d", str(apk)], timeout=timeout)
+    def install_apk(
+        self, apk: Path, timeout: int = 1200, to_sd: bool = False
+    ) -> None:
+        """Install an APK, optionally staging it directly on the SD card.
+
+        The PS202 has a small /data partition. The normal adb install path
+        first copies a large APK into /data/local/tmp, which can fail even
+        when the SD card has plenty of room. RetroArch is therefore pushed
+        to the SD card and installed with Android's legacy -s option.
+        """
+        if not to_sd:
+            self.run(["install", "-r", "-d", str(apk)], timeout=timeout)
+            return
+
+        name = apk.name
+        if not SAFE_NAME.fullmatch(name):
+            raise InstallerError(f"unsafe APK filename: {name}")
+        remote = f"/storage/sdcard1/ps202/cache/.vamanos-install-{name}"
+        self.push(apk, remote, timeout=timeout)
+        quoted = shlex.quote(remote)
+        try:
+            result = self.shell(
+                f"pm install -r -d -s {quoted}", timeout=timeout, check=False
+            )
+            output = (result.stdout + result.stderr).strip()
+            if result.returncode != 0 or "Success" not in output:
+                raise InstallerError(
+                    f"could not install {name} on the SD card"
+                    + (f": {output}" if output else "")
+                )
+        finally:
+            # This is only the installer staging copy; the installed package
+            # lives in Android's managed SD-card container.
+            self.shell(f"rm -f {quoted}", timeout=30, check=False)
 
     def wait_for_device(self, timeout: int = 240) -> None:
         self.run(["wait-for-device"], timeout=timeout)
@@ -357,6 +389,16 @@ class AdbClient:
         if out.startswith("package:"):
             return out.split("package:", 1)[1].strip()
         return None
+
+    def package_is_on_sd(self, package: str) -> bool:
+        path = self.package_path(package)
+        return bool(
+            path
+            and (
+                path.startswith("/mnt/asec/")
+                or path.startswith("/mnt/secure/asec/")
+            )
+        )
 
     def free_bytes(self, path: str) -> Optional[int]:
         """Read free bytes from old Android toolbox `df` output."""
@@ -1190,18 +1232,40 @@ class VamanOSInstaller:
         packages = [
             key
             for key in ("emulationstation", "retroarch")
-            if not self.installed_package_matches(key)
+            if key != "retroarch" and not self.installed_package_matches(key)
         ]
         if require_ppsspp:
             packages.append("ppsspp")
         package_bytes = sum(self.art(key).stat().st_size for key in packages)
         required_data = package_bytes + INSTALL_TEMP_MARGIN_BYTES
-        report = {"required_data": required_data, "packages": packages}
+        retroarch_needs_sd = (
+            not self.installed_package_matches("retroarch")
+            or not self.adb.package_is_on_sd("com.retroarch.ra32")
+        )
+        required_sd = MIN_SD_FREE_BYTES
+        required_app_sd = MIN_SD_FREE_BYTES
+        if retroarch_needs_sd:
+            # RetroArch is staged on the SD card before Android installs it.
+            # Include the staged APK plus a small safety margin in the SD
+            # check, but do not incorrectly demand that space from /data.
+            retroarch_bytes = (
+                self.art("retroarch").stat().st_size + INSTALL_TEMP_MARGIN_BYTES
+            )
+            required_sd += retroarch_bytes
+            required_app_sd += retroarch_bytes
+        report = {
+            "required_data": required_data,
+            "required_sd": required_sd,
+            "required_app_sd": required_app_sd,
+            "packages": packages,
+            "retroarch_on_sd": self.adb.package_is_on_sd("com.retroarch.ra32"),
+        }
 
         for mount, minimum in (
             ("/data", required_data),
             ("/storage/sdcard0", 1 * 1024 * 1024),
-            ("/storage/sdcard1", MIN_SD_FREE_BYTES),
+            ("/storage/sdcard1", required_sd),
+            ("/mnt/asec", required_app_sd),
         ):
             available = self.adb.free_bytes(mount)
             report[mount] = available
@@ -2088,17 +2152,22 @@ class VamanOSInstaller:
 
     def install_apks(self) -> None:
         for key in ("emulationstation", "retroarch"):
-            if self.installed_package_matches(key):
+            exact = self.installed_package_matches(key)
+            if exact and (
+                key != "retroarch"
+                or self.adb.package_is_on_sd("com.retroarch.ra32")
+            ):
                 self.msg(f"  keeping existing {key} (exact bundle match)")
                 continue
             apk = self.art(key)
             size = apk.stat().st_size // (1024 * 1024) if apk.is_file() else "download"
+            action = "moving" if exact else "installing"
             self.msg(
-                f"  installing {key} ({size} MiB)"
+                f"  {action} {key} ({size} MiB)"
                 if isinstance(size, int)
-                else f"  installing {key} ({size})"
+                else f"  {action} {key} ({size})"
             )
-            self.adb.install_apk(apk)
+            self.adb.install_apk(apk, to_sd=(key == "retroarch"))
         if self.adb.package_path(PPSSPP_PACKAGE):
             self.msg("  keeping existing ppsspp")
             return

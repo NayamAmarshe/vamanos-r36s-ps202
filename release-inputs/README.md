@@ -10,6 +10,8 @@ PPSSPP and uses this bundled copy only as a fallback when PPSSPP is missing.
 
 ## Contents
 
+- `apks/emulationstation.apk` — the packaged Batocera V2 EmulationStation
+  frontend used by vamanOS.
 - `bin/su` — the live `/system/xbin/su` fetched from the reference device
   (SHA-256 `48bdf38d…`). Used for step 3 of the install.
 - `apks/ppsspp.apk` — a fallback `org.ppsspp.ppsspp` APK (from the reference

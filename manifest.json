@@ -12,7 +12,7 @@
   },
   "artifacts": {
     "emulationstation": {
-      "source": "../../ps202-batocera-es/build/ps202-emulationstation.apk",
+      "source": "release-inputs/apks/emulationstation.apk",
       "package": "com.ps202.emulationstation",
       "sha256": "f9aefe9d2b941e50b3f210f14271f072bf6b1aec8df3e03c06dcb101090087c5"
     },

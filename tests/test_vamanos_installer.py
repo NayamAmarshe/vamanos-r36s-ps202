@@ -18,9 +18,9 @@ PROFILE = inst.load_json(INSTALLER / "device-profile.json")
 
 class ManifestProfileTests(unittest.TestCase):
     def test_emulationstation_artifact_is_the_suspend_fix_build(self):
-        apk = (ROOT / "ps202-batocera-es/build/ps202-emulationstation.apk").resolve()
+        apk = (INSTALLER / MANIFEST["artifacts"]["emulationstation"]["source"]).resolve()
         if not apk.is_file():
-            self.skipTest("current EmulationStation APK not present")
+            self.skipTest("packaged EmulationStation APK not present")
         self.assertEqual(MANIFEST["artifacts"]["emulationstation"]["sha256"],
                          inst.sha256_file(apk))
         with zipfile.ZipFile(apk) as archive:

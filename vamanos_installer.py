@@ -43,12 +43,12 @@ import sys
 import tempfile
 import time
 import xml.etree.ElementTree as ET
-from urllib.error import URLError
-from urllib.request import Request, urlopen
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
+from urllib.error import URLError
+from urllib.request import Request, urlopen
 
 INSTALLER_DIR = Path(__file__).resolve().parent
 WORKSPACE_ROOT = INSTALLER_DIR.parents[1]
@@ -60,12 +60,28 @@ CONFIRM_RE = re.compile(r"^[a-zA-Z0-9]{4,40}$")
 MIN_SD_FREE_BYTES = 32 * 1024 * 1024
 INSTALL_TEMP_MARGIN_BYTES = 32 * 1024 * 1024
 
+VAMANOS_BANNER = r"""
+                                                    
+                                   ▄▄▄▄▄    ▄▄▄▄▄▄▄ 
+                                 ▄███████▄ █████▀▀▀ 
+██ ██  ▀▀█▄ ███▄███▄  ▀▀█▄ ████▄ ███   ███  ▀████▄  
+██▄██ ▄█▀██ ██ ██ ██ ▄█▀██ ██ ██ ███▄▄▄███    ▀████ 
+ ▀█▀  ▀█▄██ ██ ██ ██ ▀█▄██ ██ ██  ▀█████▀  ███████▀ 
+                                                    
+
+""".strip()
+
 # The ES Java bridge auto-derives CONFIGFILE/SDCARD/EXTERNAL/DATADIR/APK for
 # RetroArch (see EmulationStationActivity.buildIntent), so we only rely on the
 # launcher XML for ROM + LIBRETRO + the PSP shortcut.
 RADIR_SD = "/storage/sdcard1/retroarch/cores"
 RADIR_PRIVATE = "/data/data/com.retroarch.ra32/cores"
 PPSSPP_PACKAGE = "org.ppsspp.ppsspp"
+ES_HOME_COMPONENT = "com.ps202.emulationstation/.PS202HomeActivity"
+HOME_INTENT = (
+    "am start -W -a android.intent.action.MAIN "
+    "-c android.intent.category.HOME -f 0x10000000"
+)
 
 
 class InstallerError(RuntimeError):
@@ -75,6 +91,15 @@ class InstallerError(RuntimeError):
 # --------------------------------------------------------------------------- #
 # Small helpers
 # --------------------------------------------------------------------------- #
+
+
+def print_banner() -> None:
+    """Print the friendly vamanOS installer logo."""
+    print()
+    print(VAMANOS_BANNER)
+    print("vamanOS - PS202 handheld installer")
+    print()
+
 
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
@@ -109,6 +134,30 @@ def align_up(value: int, page: int) -> int:
     return (value + page - 1) // page * page
 
 
+def parse_df_size(value: str) -> Optional[int]:
+    """Convert an old Android toolbox df size to bytes.
+
+    PS202 toolbox prints human-readable sizes (for example ``83.8M``) even
+    without a ``-h`` flag. Older builds print plain 1K-block counts instead.
+    """
+    match = re.fullmatch(
+        r"([0-9]+(?:\.[0-9]+)?)([KMGTPE]?)(?:I?B)?", value.strip(), re.IGNORECASE
+    )
+    if not match:
+        return None
+    number, suffix = match.groups()
+    multiplier = {
+        "": 1024,
+        "K": 1024,
+        "M": 1024**2,
+        "G": 1024**3,
+        "T": 1024**4,
+        "P": 1024**5,
+        "E": 1024**6,
+    }[suffix.upper()]
+    return int(float(number) * multiplier)
+
+
 def parse_cfg(text: str) -> Dict[str, str]:
     """Parse a simple RetroArch-style 'key = "value"' config. No interpolation."""
     result = {}
@@ -123,7 +172,10 @@ def parse_cfg(text: str) -> Dict[str, str]:
 
 
 PERSONAL_KEYS = {
-    "input_player1_", "input_player2_", "input_libretro_device_", "input_enable_hotkey",
+    "input_player1_",
+    "input_player2_",
+    "input_libretro_device_",
+    "input_enable_hotkey",
 }
 
 # Stock RetroArch 1.20 creates these keys as unbound on PS202 even though the
@@ -171,13 +223,17 @@ def apply_ps202_input_defaults(existing: str, merged: str) -> str:
     """Seed the stock PS202 pad only when all four D-pad buttons are unset."""
     current = parse_cfg(existing)
     dpad_keys = (
-        "input_player1_up_btn", "input_player1_down_btn",
-        "input_player1_left_btn", "input_player1_right_btn",
+        "input_player1_up_btn",
+        "input_player1_down_btn",
+        "input_player1_left_btn",
+        "input_player1_right_btn",
     )
     unset = {None, '"nul"', '""', ""}
     if not all(current.get(key) in unset for key in dpad_keys):
         return merged
-    overlay = "\n".join(f"{key} = {value}" for key, value in PS202_INPUT_DEFAULTS.items())
+    overlay = "\n".join(
+        f"{key} = {value}" for key, value in PS202_INPUT_DEFAULTS.items()
+    )
     return merge_cfg(merged, overlay, preserve_personal=False)
 
 
@@ -192,23 +248,34 @@ class CommandResult:
 # Host execution
 # --------------------------------------------------------------------------- #
 
+
 class HostRunner:
     def __init__(self, cwd: Optional[Path] = None, dry_run: bool = False):
         self.cwd = cwd
         self.dry_run = dry_run
 
-    def run(self, args: Sequence[str], timeout: int = 300, check: bool = True,
-            binary: bool = False) -> CommandResult:
+    def run(
+        self,
+        args: Sequence[str],
+        timeout: int = 300,
+        check: bool = True,
+        binary: bool = False,
+    ) -> CommandResult:
         if self.dry_run:
             print("  [dry-run] " + " ".join(args))
             return CommandResult(0, "", "")
         proc = subprocess.run(
-            args, capture_output=True, timeout=timeout, cwd=str(self.cwd) if self.cwd else None,
+            args,
+            capture_output=True,
+            timeout=timeout,
+            cwd=str(self.cwd) if self.cwd else None,
         )
         stdout = proc.stdout if binary else proc.stdout.decode("utf-8", "replace")
         stderr = proc.stderr.decode("utf-8", "replace")
         if check and proc.returncode != 0:
-            raise InstallerError(f"command failed (rc={proc.returncode}): {' '.join(args)}\n{stderr}")
+            raise InstallerError(
+                f"command failed (rc={proc.returncode}): {' '.join(args)}\n{stderr}"
+            )
         return CommandResult(proc.returncode, stdout, stderr)
 
 
@@ -216,9 +283,14 @@ class HostRunner:
 # ADB
 # --------------------------------------------------------------------------- #
 
+
 class AdbClient:
-    def __init__(self, adb: str = "adb", serial: Optional[str] = None,
-                 runner: Optional[HostRunner] = None):
+    def __init__(
+        self,
+        adb: str = "adb",
+        serial: Optional[str] = None,
+        runner: Optional[HostRunner] = None,
+    ):
         self.adb = adb
         self.serial = serial
         self.runner = runner or HostRunner()
@@ -226,12 +298,18 @@ class AdbClient:
     def base(self) -> List[str]:
         return [self.adb, "-s", self.serial] if self.serial else [self.adb]
 
-    def run(self, args: Sequence[str], timeout: int = 300, check: bool = True) -> CommandResult:
+    def run(
+        self, args: Sequence[str], timeout: int = 300, check: bool = True
+    ) -> CommandResult:
         return self.runner.run(self.base() + list(args), timeout=timeout, check=check)
 
-    def shell(self, command: str, timeout: int = 300, check: bool = True) -> CommandResult:
+    def shell(
+        self, command: str, timeout: int = 300, check: bool = True
+    ) -> CommandResult:
         # 'shell' keeps multi-command remote pipelines intact.
-        return self.runner.run(self.base() + ["shell", command], timeout=timeout, check=check)
+        return self.runner.run(
+            self.base() + ["shell", command], timeout=timeout, check=check
+        )
 
     def shell_text(self, command: str, timeout: int = 120, check: bool = True) -> str:
         return self.shell(command, timeout=timeout, check=check).stdout.strip()
@@ -239,8 +317,12 @@ class AdbClient:
     def push(self, local: Path, remote: str, timeout: int = 600) -> None:
         self.run(["push", str(local), remote], timeout=timeout)
 
-    def pull(self, remote: str, local: Path, timeout: int = 600, check: bool = True) -> bool:
-        result = self.runner.run(self.base() + ["pull", remote, str(local)], timeout=timeout, check=check)
+    def pull(
+        self, remote: str, local: Path, timeout: int = 600, check: bool = True
+    ) -> bool:
+        result = self.runner.run(
+            self.base() + ["pull", remote, str(local)], timeout=timeout, check=check
+        )
         return result.returncode == 0
 
     def install_apk(self, apk: Path, timeout: int = 1200) -> None:
@@ -274,19 +356,20 @@ class AdbClient:
     def free_bytes(self, path: str) -> Optional[int]:
         """Read free bytes from old Android toolbox `df` output."""
         result = self.shell(f"df '{path}'", timeout=30, check=False)
-        for line in reversed(result.stdout.replace("\\r", "").splitlines()):
+        for line in reversed(result.stdout.replace("\r", "").splitlines()):
             fields = line.split()
             if len(fields) < 4:
                 continue
-            # Typical toolbox output is filesystem, blocks, used, available,
-            # percent, mountpoint. Accept the shorter four-column form too.
+            # Typical output is filesystem, blocks/size, used, available/free,
+            # percent or blksize, mountpoint. The fourth field is the free
+            # value in both the numeric and human-readable PS202 formats.
+            available = parse_df_size(fields[3])
+            if available is not None:
+                return available
+            # Accept older shortened numeric output as a fallback.
             numeric = [field for field in fields[1:] if field.isdigit()]
-            if len(numeric) < 3:
-                continue
-            try:
-                return int(numeric[-1]) * 1024
-            except ValueError:
-                continue
+            if len(numeric) >= 3:
+                return int(numeric[2]) * 1024
         return None
 
 
@@ -307,8 +390,15 @@ def discover_bundle_root(directory: Path = INSTALLER_DIR) -> Optional[Path]:
 # Boot image construction (only used for host-side unit tests / assembly)
 # --------------------------------------------------------------------------- #
 
-def build_patched_boot(stock: Path, output: Path, patched_adbd: Path,
-                       find_binary: Path, init_script: Path, profile: dict) -> str:
+
+def build_patched_boot(
+    stock: Path,
+    output: Path,
+    patched_adbd: Path,
+    find_binary: Path,
+    init_script: Path,
+    profile: dict,
+) -> str:
     """Reproduce the verified boot-adbd-root-v2.img from stock boot + patches.
 
     This mirrors the manual process used to create the reference image. It is
@@ -328,7 +418,7 @@ def build_patched_boot(stock: Path, output: Path, patched_adbd: Path,
 
     # The ramdisk region is MTK-wrapped: 4-byte magic + 4-byte size +4-byte tag
     # then the gzip cpio. Repack using the wrapper to stay byte-compatible.
-    wrapped = data[ramdisk_offset + 12: ramdisk_offset + ramdisk_size]
+    wrapped = data[ramdisk_offset + 12 : ramdisk_offset + ramdisk_size]
 
     def _gzip_roundtrip(raw: bytes) -> bytes:
         return _gz.compress(raw)
@@ -357,10 +447,10 @@ def build_patched_boot(stock: Path, output: Path, patched_adbd: Path,
     header = bytearray(data[:page])
     ramdisk_region = bytearray(b"\x00" * len(new_wrapped))
     ramdisk_region[: len(new_wrapped)] = new_wrapped
-    out = bytearray(data[: ramdisk_offset])
+    out = bytearray(data[:ramdisk_offset])
     out += ramdisk_region
     # keep trailing padding (region length) intact
-    out += data[ramdisk_offset + len(new_wrapped):]
+    out += data[ramdisk_offset + len(new_wrapped) :]
     output.write_bytes(bytes(out))
     return sha256_file(output)
 
@@ -369,17 +459,24 @@ def _parse_newc(cpio: bytes) -> List[tuple]:
     entries = []
     offset = 0
     while offset + 110 <= len(cpio):
-        magic = cpio[offset: offset + 6]
+        magic = cpio[offset : offset + 6]
         if magic not in (b"070701", b"070702"):
             break
+
         # newc header is 110 bytes (but 4-byte padded); fields are hex ascii
         def field(start: int, end: int) -> int:
-            return int(cpio[offset + start: offset + end].decode(), 16)
+            return int(cpio[offset + start : offset + end].decode(), 16)
+
         size = field(54, 62)
         name_len = field(94, 98)
-        name = cpio[offset + 110: offset + 110 + name_len - 1].decode()
+        name = cpio[offset + 110 : offset + 110 + name_len - 1].decode()
         mode = field(14, 22)
-        body = cpio[offset + 110 + align_up_maybe(name_len, 4): offset + 110 + align_up_maybe(name_len, 4) + size]
+        body = cpio[
+            offset + 110 + align_up_maybe(name_len, 4) : offset
+            + 110
+            + align_up_maybe(name_len, 4)
+            + size
+        ]
         entries.append((name, mode, body))
         offset += align_up_maybe(110 + align_up_maybe(name_len, 4) + size, 4)
     return entries
@@ -393,14 +490,23 @@ def _build_newc(entries: List[tuple]) -> bytes:
     out = bytearray()
     inode = 0x101
     trailer = b"TRAILER!!!"
+
     def hdr(name_len: int, mode: int, size: int, ino: int) -> bytes:
         fields = [
             "070701",  # magic
-            f"{ino:08x}", 0x00000000, f"{mode:08x}", 0x00000000,
-            f"{size:08x}", f"{inode * 0x10000 & 0xffffffff:08x}", 0x00000000,
-            0x00000001, name_len, 0x00000000,
+            f"{ino:08x}",
+            0x00000000,
+            f"{mode:08x}",
+            0x00000000,
+            f"{size:08x}",
+            f"{inode * 0x10000 & 0xFFFFFFFF:08x}",
+            0x00000000,
+            0x00000001,
+            name_len,
+            0x00000000,
         ]
         return "".join(fields).encode()
+
     for name, mode, body in entries:
         nlen = len(name.encode()) + 1
         out += hdr(nlen, mode, len(body), inode)
@@ -418,12 +524,18 @@ def _build_newc(entries: List[tuple]) -> bytes:
 # Manifest / profile
 # --------------------------------------------------------------------------- #
 
+
 class VamanOSInstaller:
-    def __init__(self, manifest_path: Path = DEFAULT_MANIFEST,
-                 profile_path: Path = DEFAULT_PROFILE,
-                 adb: str = "adb", serial: Optional[str] = None,
-                 dry_run: bool = False, quiet: bool = False,
-                 bundle_root: Optional[Path] = None):
+    def __init__(
+        self,
+        manifest_path: Path = DEFAULT_MANIFEST,
+        profile_path: Path = DEFAULT_PROFILE,
+        adb: str = "adb",
+        serial: Optional[str] = None,
+        dry_run: bool = False,
+        quiet: bool = False,
+        bundle_root: Optional[Path] = None,
+    ):
         self.quiet = quiet
         self.manifest = load_json(manifest_path)
         self.profile = load_json(profile_path)
@@ -439,10 +551,14 @@ class VamanOSInstaller:
             self.adb.serial = discovered_serial
         self.identity: Optional[dict] = None
         self.known = False
-        self.run_dir = INSTALLER_DIR / "runs" / (
-            time.strftime("%Y%m%d-%H%M%S") + "-" + self.serial)
+        self.run_dir = (
+            INSTALLER_DIR
+            / "runs"
+            / (time.strftime("%Y%m%d-%H%M%S") + "-" + self.serial)
+        )
         self.dry_run = dry_run
         self.preserved_system_digests: Dict[str, str] = {}
+        self.package_match_cache: Dict[str, bool] = {}
         # If set, artifacts resolve from an extracted `assemble` bundle instead
         # of the workspace source tree. The extracted release keeps its
         # checksum index beside the payload.
@@ -472,14 +588,19 @@ class VamanOSInstaller:
         }
         self.identity = identity
         expected = self.profile["identity"]
-        self.known = all(identity[k] == expected[k] for k in ("model", "build_id", "android_release", "abi"))
+        self.known = all(
+            identity[k] == expected[k]
+            for k in ("model", "build_id", "android_release", "abi")
+        )
         return identity
 
     def print_identity(self) -> None:
         ident = self.identify()
         state = "MATCH (PS202_00001)" if self.known else "UNKNOWN device"
-        self.msg(f"Device: {ident['model']} / {ident['build_id']} / "
-                 f"Android {ident['android_release']} / {ident['abi']}  [{state}]")
+        self.msg(
+            f"Device: {ident['model']} / {ident['build_id']} / "
+            f"Android {ident['android_release']} / {ident['abi']}  [{state}]"
+        )
 
     # -- artifact resolution ----------------------------------------------- #
     def _bundle_artifact(self, key: str) -> Optional[Path]:
@@ -528,7 +649,8 @@ class VamanOSInstaller:
         if actual != expected:
             raise InstallerError(
                 f"bundle checksum mismatch for {relative}:\n"
-                f"  expected {expected}\n  actual   {actual}")
+                f"  expected {expected}\n  actual   {actual}"
+            )
 
     def _download_artifact(self, key: str, spec: dict, target: Path) -> None:
         """Download a pinned artifact into a local cache and verify it later."""
@@ -537,13 +659,19 @@ class VamanOSInstaller:
             raise InstallerError(f"artifact {key} is missing: {target}")
         target.parent.mkdir(parents=True, exist_ok=True)
         fd, temporary_name = tempfile.mkstemp(
-            prefix=f".{target.name}.", suffix=".part", dir=str(target.parent))
+            prefix=f".{target.name}.", suffix=".part", dir=str(target.parent)
+        )
         temporary = Path(temporary_name)
         try:
             self.msg(f"  downloading {key} from the official source")
             version = self.manifest.get("manifest_version", "1.0")
-            request = Request(url, headers={"User-Agent": f"vamanOS-installer/{version}"})
-            with urlopen(request, timeout=300) as response, os.fdopen(fd, "wb") as stream:
+            request = Request(
+                url, headers={"User-Agent": f"vamanOS-installer/{version}"}
+            )
+            with (
+                urlopen(request, timeout=300) as response,
+                os.fdopen(fd, "wb") as stream,
+            ):
                 while True:
                     chunk = response.read(1 << 20)
                     if not chunk:
@@ -580,12 +708,18 @@ class VamanOSInstaller:
             if bundled is None:
                 if spec.get("url"):
                     if getattr(self, "dry_run", False):
-                        self.msg(f"  [dry-run] would download {key} from the official source")
+                        self.msg(
+                            f"  [dry-run] would download {key} from the official source"
+                        )
                         return source
                     self._download_artifact(key, spec, source)
                 else:
                     for fallback in spec.get("fallback", []):
-                        candidate = resolve_path(fallback, INSTALLER_DIR) if not Path(fallback).is_absolute() else Path(fallback)
+                        candidate = (
+                            resolve_path(fallback, INSTALLER_DIR)
+                            if not Path(fallback).is_absolute()
+                            else Path(fallback)
+                        )
                         if candidate.is_file():
                             source = candidate
                             break
@@ -598,7 +732,9 @@ class VamanOSInstaller:
         if expected:
             actual = sha256_file(source)
             if actual != expected:
-                raise InstallerError(f"SHA-256 mismatch for {key}: {source}\n  expected {expected}\n  actual   {actual}")
+                raise InstallerError(
+                    f"SHA-256 mismatch for {key}: {source}\n  expected {expected}\n  actual   {actual}"
+                )
         return source
 
     def frontend_music_files(self) -> Dict[str, Path]:
@@ -627,7 +763,8 @@ class VamanOSInstaller:
             if actual != expected:
                 raise InstallerError(
                     f"SHA-256 mismatch for frontend music {name}:\n"
-                    f"  expected {expected}\n  actual   {actual}")
+                    f"  expected {expected}\n  actual   {actual}"
+                )
             resolved[name] = source
             self._verify_bundle_file(source)
         return resolved
@@ -648,13 +785,14 @@ class VamanOSInstaller:
             raise InstallerError(f"payload file {key} missing: {source}")
         return source
 
-    def validate_launcher_config(self, launchers: Path,
-                                 cores: Dict[str, Path]) -> None:
+    def validate_launcher_config(self, launchers: Path, cores: Dict[str, Path]) -> None:
         """Make sure every advertised PS202 system has a usable route."""
         try:
             root = ET.parse(launchers).getroot()
         except (ET.ParseError, OSError) as exc:
-            raise InstallerError(f"cannot read launcher configuration {launchers}: {exc}") from exc
+            raise InstallerError(
+                f"cannot read launcher configuration {launchers}: {exc}"
+            ) from exc
 
         entries = {}
         for node in root.findall("launcher"):
@@ -671,13 +809,18 @@ class VamanOSInstaller:
         missing_systems = sorted(expected_systems - set(entries))
         if missing_systems:
             raise InstallerError(
-                "launcher configuration is missing systems: " + ", ".join(missing_systems))
+                "launcher configuration is missing systems: "
+                + ", ".join(missing_systems)
+            )
         available = {path.name for path in cores.values()}
-        missing_cores = sorted({core for core in entries.values() if core and core not in available})
+        missing_cores = sorted(
+            {core for core in entries.values() if core and core not in available}
+        )
         if missing_cores:
             raise InstallerError(
                 "launcher configuration references cores that are not installed: "
-                + ", ".join(missing_cores))
+                + ", ".join(missing_cores)
+            )
         self.log(f"launcher validation: systems={len(entries)} cores={len(available)}")
 
     def core_files(self) -> Dict[str, Path]:
@@ -690,13 +833,18 @@ class VamanOSInstaller:
         sources = []
         if self.bundle_root:
             sources.append(self.bundle_root / "payload" / "cores")
-        sources += [resolve_path(s, INSTALLER_DIR) for s in self.manifest.get("core_sources", [])]
+        sources += [
+            resolve_path(s, INSTALLER_DIR)
+            for s in self.manifest.get("core_sources", [])
+        ]
         found: Dict[str, Path] = {}
         for short, filename in core_names.items():
             candidates = [d / filename for d in sources]
             path = next((c for c in candidates if c.is_file()), None)
             if path is None:
-                raise InstallerError(f"core missing: {filename} (checked {[str(s) for s in sources]})")
+                raise InstallerError(
+                    f"core missing: {filename} (checked {[str(s) for s in sources]})"
+                )
             self._verify_bundle_file(path)
             self._validate_armv7_core(short, path)
             expected = self.manifest.get("core_sha256", {}).get(short)
@@ -705,7 +853,8 @@ class VamanOSInstaller:
                 if actual != expected:
                     raise InstallerError(
                         f"SHA-256 mismatch for core {short}:\n"
-                        f"  expected {expected}\n  actual   {actual}")
+                        f"  expected {expected}\n  actual   {actual}"
+                    )
             found[short] = path
         return found
 
@@ -716,12 +865,20 @@ class VamanOSInstaller:
             header = path.read_bytes()[:20]
         except OSError as exc:
             raise InstallerError(f"cannot read core {short}: {path}: {exc}") from exc
-        if (len(header) < 20 or header[:4] != b"\x7fELF" or header[4] != 1
-                or header[5] != 1 or int.from_bytes(header[18:20], "little") != 40):
-            raise InstallerError(f"core {short} is not a 32-bit little-endian ARM shared library: {path}")
+        if (
+            len(header) < 20
+            or header[:4] != b"\x7fELF"
+            or header[4] != 1
+            or header[5] != 1
+            or int.from_bytes(header[18:20], "little") != 40
+        ):
+            raise InstallerError(
+                f"core {short} is not a 32-bit little-endian ARM shared library: {path}"
+            )
 
-    def validate_install_artifacts(self, boot_mode: str,
-                                   require_ppsspp: bool = True) -> None:
+    def validate_install_artifacts(
+        self, boot_mode: str, require_ppsspp: bool = True
+    ) -> None:
         """Resolve every file needed by install before requesting confirmation.
 
         This is deliberately host-only. The install plan must fail before any
@@ -729,8 +886,12 @@ class VamanOSInstaller:
         or temp-root input is unavailable.
         """
         required = [
-            "android_bootanimation", "su", "find", "emulationstation",
-            "retroarch", "cody_theme",
+            "android_bootanimation",
+            "su",
+            "find",
+            "emulationstation",
+            "retroarch",
+            "cody_theme",
         ]
         if require_ppsspp:
             required.append("ppsspp")
@@ -743,7 +904,12 @@ class VamanOSInstaller:
         self.frontend_music_files()
         cores = self.core_files()
         payloads = {}
-        for key in ("boot_helper", "performance_profile", "launcher_config", "retroarch_baseline"):
+        for key in (
+            "boot_helper",
+            "performance_profile",
+            "launcher_config",
+            "retroarch_baseline",
+        ):
             payloads[key] = self.payload_file(key)
         self.validate_launcher_config(payloads["launcher_config"], cores)
 
@@ -751,17 +917,24 @@ class VamanOSInstaller:
     def preflight(self, boot_mode: str = "auto") -> dict:
         self.identify()
         root = self.adb.is_root()
-        sd = self.adb.shell_text("ls -d /storage/sdcard1 2>/dev/null", check=False) == "/storage/sdcard1"
+        sd = (
+            self.adb.shell_text("ls -d /storage/sdcard1 2>/dev/null", check=False)
+            == "/storage/sdcard1"
+        )
         report = {"known": self.known, "root_adb": root, "sd_mounted": sd}
         if not sd:
             if self.dry_run:
                 report["sd_mounted"] = None
                 self.log("preflight (dry-run): SD mount not checked")
             else:
-                raise InstallerError("external SD (/storage/sdcard1) is not mounted. Insert the ROM/SD card and retry.")
+                raise InstallerError(
+                    "external SD (/storage/sdcard1) is not mounted. Insert the ROM/SD card and retry."
+                )
         if report["known"] and not self.dry_run:
             if root:
-                boot = self.read_current_region("boot", INSTALLER_DIR / "runs" / "_preflight-boot.bin")
+                boot = self.read_current_region(
+                    "boot", INSTALLER_DIR / "runs" / "_preflight-boot.bin"
+                )
                 self.region_check = boot
                 report["boot_sha256"] = boot
             else:
@@ -777,7 +950,11 @@ class VamanOSInstaller:
         if self.dry_run:
             return {}
 
-        packages = ["emulationstation", "retroarch"]
+        packages = [
+            key
+            for key in ("emulationstation", "retroarch")
+            if not self.installed_package_matches(key)
+        ]
         if require_ppsspp:
             packages.append("ppsspp")
         package_bytes = sum(self.art(key).stat().st_size for key in packages)
@@ -785,9 +962,10 @@ class VamanOSInstaller:
         report = {"required_data": required_data, "packages": packages}
 
         for mount, minimum in (
-                ("/data", required_data),
-                ("/storage/sdcard0", 1 * 1024 * 1024),
-                ("/storage/sdcard1", MIN_SD_FREE_BYTES)):
+            ("/data", required_data),
+            ("/storage/sdcard0", 1 * 1024 * 1024),
+            ("/storage/sdcard1", MIN_SD_FREE_BYTES),
+        ):
             available = self.adb.free_bytes(mount)
             report[mount] = available
             if available is None:
@@ -797,15 +975,18 @@ class VamanOSInstaller:
                     raise InstallerError(
                         f"not enough internal storage: {available // (1024 * 1024)} MiB free, "
                         f"about {required_data // (1024 * 1024)} MiB is needed for this install. "
-                        "Remove unused apps/files and retry.")
+                        "Remove unused apps/files and retry."
+                    )
                 raise InstallerError(
                     f"not enough free space on {mount}: "
-                    f"{available // (1024 * 1024)} MiB free")
+                    f"{available // (1024 * 1024)} MiB free"
+                )
 
         self.log("storage preflight: " + json.dumps(report, sort_keys=True))
         self.msg(
             f"Storage ready: /data has {report['/data'] // (1024 * 1024)} MiB free; "
-            f"/storage/sdcard1 has {report['/storage/sdcard1'] // (1024 * 1024)} MiB free")
+            f"/storage/sdcard1 has {report['/storage/sdcard1'] // (1024 * 1024)} MiB free"
+        )
         return report
 
     # -- region I/O (root only) --------------------------------------------- #
@@ -819,9 +1000,12 @@ class VamanOSInstaller:
         remote = f"/data/local/vamanos-{name}-read.bin"
         result = self.adb.shell(
             f"dd if=/dev/block/mmcblk0 of={remote} bs=512 skip={sec} count={count}",
-            check=False)
+            check=False,
+        )
         if result.returncode != 0:
-            raise InstallerError(f"could not read {name} region from device: {result.stderr.strip()}")
+            raise InstallerError(
+                f"could not read {name} region from device: {result.stderr.strip()}"
+            )
         output.parent.mkdir(parents=True, exist_ok=True)
         if not self.adb.pull(remote, output, check=False):
             raise InstallerError(f"could not read {name} region from device")
@@ -838,12 +1022,17 @@ class VamanOSInstaller:
         # written into a firmware region.
         allowed = {region["stock_sha256"], self._target_hash(name)}
         if actual not in allowed:
-            raise InstallerError(f"refusing to write {name}: image hash {actual} is not a reviewed image")
+            raise InstallerError(
+                f"refusing to write {name}: image hash {actual} is not a reviewed image"
+            )
         result = self.adb.shell(
             f"dd if={remote} of=/dev/block/mmcblk0 bs=512 seek={sec} count={count}; sync",
-            check=False)
+            check=False,
+        )
         if result.returncode != 0:
-            raise InstallerError(f"could not write {name} region: {result.stderr.strip()}")
+            raise InstallerError(
+                f"could not write {name} region: {result.stderr.strip()}"
+            )
 
     def _target_hash(self, name: str) -> str:
         region = self._region(name)
@@ -856,7 +1045,9 @@ class VamanOSInstaller:
         digest = self.read_current_region(name, out)
         expected = self._target_hash(name)
         if digest != expected:
-            raise InstallerError(f"{name} readback SHA-256 {digest} != expected {expected}")
+            raise InstallerError(
+                f"{name} readback SHA-256 {digest} != expected {expected}"
+            )
         return digest
 
     def read_readback_via_runas(self, name: str, output: Path) -> str:
@@ -869,12 +1060,14 @@ class VamanOSInstaller:
         """
         region = self._region(name)
         out = self.adb.shell_text(
-            f"/system/bin/run-as {region['offset']} {region['length']} hex")
+            f"/system/bin/run-as {region['offset']} {region['length']} hex"
+        )
         hex_digits = "".join(ch for ch in out if ch in "0123456789abcdefABCDEF")
         if len(hex_digits) != region["length"] * 2:
             raise InstallerError(
                 f"{name} readback via run-as returned unexpected length "
-                f"got {len(hex_digits)} hex chars, want {region['length'] * 2}")
+                f"got {len(hex_digits)} hex chars, want {region['length'] * 2}"
+            )
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_bytes(bytes.fromhex(hex_digits))
         return sha256_file(output)
@@ -894,7 +1087,9 @@ class VamanOSInstaller:
         self.adb.push(cowtest, "/data/local/tmp/cowtest")
         self.adb.push(blockdump, "/data/local/tmp/runas-blockdump")
         self.adb.push(boot_patched, "/data/local/tmp/boot-patch.img")
-        self.adb.shell_text("chmod 755 /data/local/tmp/cowtest /data/local/tmp/runas-blockdump")
+        self.adb.shell_text(
+            "chmod 755 /data/local/tmp/cowtest /data/local/tmp/runas-blockdump"
+        )
 
         # step 2: dirtycow run-as. Always restore the original binary, even if
         # the write or readback fails. A failed temp-root attempt must not
@@ -902,27 +1097,37 @@ class VamanOSInstaller:
         self.adb.shell_text("cp /system/bin/run-as /data/local/tmp/run-as-original")
         restore_error = None
         try:
-            self.adb.shell_text("/data/local/tmp/cowtest /data/local/tmp/runas-blockdump /system/bin/run-as --no-pad")
+            self.adb.shell_text(
+                "/data/local/tmp/cowtest /data/local/tmp/runas-blockdump /system/bin/run-as --no-pad"
+            )
 
             # step 3: write boot region via patched run-as
             region = self._region("boot")
             hex_offset = hex(region["offset"])
             hex_len = hex(region["length"])
-            self.adb.shell_text(f"/system/bin/run-as {hex_offset} {hex_len} writefile /data/local/tmp/boot-patch.img")
+            self.adb.shell_text(
+                f"/system/bin/run-as {hex_offset} {hex_len} writefile /data/local/tmp/boot-patch.img"
+            )
             self.adb.shell_text("sync")
 
             # step 4: read back and verify (through run-as, as in flash-boot-v1.sh)
-            digest = self.read_readback_via_runas("boot", self.run_dir / "boot-bootstrap-readback.bin")
+            digest = self.read_readback_via_runas(
+                "boot", self.run_dir / "boot-bootstrap-readback.bin"
+            )
             if digest != region["patched_sha256"]:
                 raise InstallerError(
                     f"boot readback after temp-root write mismatches patch: {digest}\n"
-                    "Device is NOT rooted yet. The original run-as will be restored; do not reboot.")
+                    "Device is NOT rooted yet. The original run-as will be restored; do not reboot."
+                )
         finally:
             restored = self.adb.shell(
                 "/data/local/tmp/cowtest /data/local/tmp/run-as-original /system/bin/run-as --no-pad",
-                check=False)
+                check=False,
+            )
             if restored.returncode != 0:
-                restore_error = "could not restore /system/bin/run-as after temp-root attempt"
+                restore_error = (
+                    "could not restore /system/bin/run-as after temp-root attempt"
+                )
         if restore_error:
             raise InstallerError(restore_error)
         self.msg("Boot patch verified. Rebooting to activate root ADB...")
@@ -939,11 +1144,15 @@ class VamanOSInstaller:
         if not self.adb.is_root():
             raise InstallerError("install_su requires root ADB")
         # back up any existing su first (never overwrite a working one blindly)
-        self.adb.shell_text("test -f /system/xbin/su && cp -f /system/xbin/su /system/xbin/su.vamanos-previous 2>/dev/null; echo done")
+        self.adb.shell_text(
+            "test -f /system/xbin/su && cp -f /system/xbin/su /system/xbin/su.vamanos-previous 2>/dev/null; echo done"
+        )
         self.adb.push(su, "/data/local/tmp/vamanos-su")
         # chown clears setuid/setgid on Android; set ownership first and the
         # 6755 mode last so su remains usable by non-root callers.
-        self.adb.shell_text("mount -o rw,remount /system 2>/dev/null; cp -f /data/local/tmp/vamanos-su /system/xbin/su; chown 0:0 /system/xbin/su; chmod 6755 /system/xbin/su; sync")
+        self.adb.shell_text(
+            "mount -o rw,remount /system 2>/dev/null; cp -f /data/local/tmp/vamanos-su /system/xbin/su; chown 0:0 /system/xbin/su; chmod 6755 /system/xbin/su; sync"
+        )
         mode = self.adb.shell_text("ls -l /system/xbin/su 2>/dev/null", check=False)
         if not mode.startswith("-rwsr-sr-x"):
             raise InstallerError(f"/system/xbin/su has unexpected mode/owner: {mode}")
@@ -969,7 +1178,8 @@ class VamanOSInstaller:
         owner = spec.get("owner", "0:0")
         self.adb.shell_text(
             f"mount -o rw,remount /system 2>/dev/null; "
-            f"cp -f {remote} {on_device}; chmod {mode} {on_device}; chown {owner} {on_device}; sync; echo done")
+            f"cp -f {remote} {on_device}; chmod {mode} {on_device}; chown {owner} {on_device}; sync; echo done"
+        )
 
     def install_aux_binaries(self) -> None:
         """Install find (and any other manifest 'on_device' binaries except su,
@@ -980,12 +1190,12 @@ class VamanOSInstaller:
             if isinstance(spec, dict) and spec.get("on_device"):
                 self.install_system_binary(key)
 
-
-    def deploy_boot_helper(self, helper: Path, performance_profile: Optional[Path] = None) -> None:
+    def deploy_boot_helper(
+        self, helper: Path, performance_profile: Optional[Path] = None
+    ) -> None:
         self.adb.push(helper, "/data/local/ps202-boot.sh")
         command = (
-            "chmod 0755 /data/local/ps202-boot.sh; "
-            "chown 0:0 /data/local/ps202-boot.sh"
+            "chmod 0755 /data/local/ps202-boot.sh; chown 0:0 /data/local/ps202-boot.sh"
         )
         if performance_profile is not None:
             self.adb.push(performance_profile, "/data/local/ps202-performance.sh")
@@ -1017,7 +1227,8 @@ class VamanOSInstaller:
             f"cp -f {splash['path']} {splash['backup_path']} 2>/dev/null || true; "
             f"cp -f {remote} {splash['path']} && "
             f"chmod {splash['mode']} {splash['path']} && "
-            f"chown {splash['owner']} {splash['path']} && sync")
+            f"chown {splash['owner']} {splash['path']} && sync"
+        )
         self.verify_android_bootanimation()
 
     def verify_android_bootanimation(self) -> str:
@@ -1027,12 +1238,17 @@ class VamanOSInstaller:
         splash = self.profile["android_boot_splash"]
         output = self.run_dir / "android-bootanimation-readback.zip"
         self.run_dir.mkdir(parents=True, exist_ok=True)
-        if not self.adb.pull(splash["path"], output, check=False) or not output.is_file():
+        if (
+            not self.adb.pull(splash["path"], output, check=False)
+            or not output.is_file()
+        ):
             raise InstallerError(f"Android boot splash is missing at {splash['path']}")
         digest = sha256_file(output)
         expected = self.manifest["artifacts"]["android_bootanimation"]["sha256"]
         if digest != expected:
-            raise InstallerError(f"Android boot splash SHA-256 {digest} != expected {expected}")
+            raise InstallerError(
+                f"Android boot splash SHA-256 {digest} != expected {expected}"
+            )
         return digest
 
     def ensure_sd_layout(self) -> None:
@@ -1063,12 +1279,15 @@ class VamanOSInstaller:
         for short, src in cores.items():
             output = output_dir / src.name
             if not self.adb.pull(f"{RADIR_PRIVATE}/{src.name}", output, check=False):
-                raise InstallerError(f"RetroArch private core is missing: {RADIR_PRIVATE}/{src.name}")
+                raise InstallerError(
+                    f"RetroArch private core is missing: {RADIR_PRIVATE}/{src.name}"
+                )
             actual = sha256_file(output)
             expected = sha256_file(src)
             if actual != expected:
                 raise InstallerError(
-                    f"RetroArch private core {short} hash {actual} != source {expected}")
+                    f"RetroArch private core {short} hash {actual} != source {expected}"
+                )
             self.log(f"core {short}: private sha256={actual}")
 
     def install_cody_theme(self) -> None:
@@ -1092,7 +1311,8 @@ class VamanOSInstaller:
         self.adb.shell(
             f"mkdir -p /storage/sdcard1/ps202/themes; "
             f"if test -f '{target}'; then cp -f '{target}' '{backup}'; fi; "
-            f"cp -f '{remote}' '{target}' && sync")
+            f"cp -f '{remote}' '{target}' && sync"
+        )
         self.verify_cody_theme(require_active=False)
         self.msg(f"  staged V2 CODY theme at {target}")
 
@@ -1106,13 +1326,17 @@ class VamanOSInstaller:
         digest = sha256_file(output)
         if digest != spec["sha256"]:
             raise InstallerError(
-                f"V2 CODY theme SHA-256 {digest} != expected {spec['sha256']}")
+                f"V2 CODY theme SHA-256 {digest} != expected {spec['sha256']}"
+            )
 
         active = self.adb.shell_text(
             "test -f /storage/sdcard1/themes/EPIC-CODY/theme.xml && echo yes",
-            check=False).endswith("yes")
+            check=False,
+        ).endswith("yes")
         if require_active and not active:
-            raise InstallerError("V2 CODY theme archive is staged but EPIC-CODY did not activate")
+            raise InstallerError(
+                "V2 CODY theme archive is staged but EPIC-CODY did not activate"
+            )
         return active
 
     def install_frontend_music(self) -> None:
@@ -1128,22 +1352,29 @@ class VamanOSInstaller:
         self.adb.shell_text(f"mkdir -p {target_root_q}")
         installed = 0
         kept = 0
-        for index, (name, source) in enumerate(files.items()):
-            remote = f"/data/local/tmp/vamanos-music-{index}.ogg"
+        for name, source in files.items():
             target = f"{target_root}/{name}"
             target_q = shlex.quote(target)
-            remote_q = shlex.quote(remote)
-            self.adb.push(source, remote)
+            # Do not stage music in /data/local/tmp. On this PS202, adb can
+            # create a temporary file there but the legacy shell context
+            # cannot remove it; cleanup output then looks like a copy failure.
+            # A direct adb push also avoids the old FUSE/cp permission path.
             state = self.adb.shell_text(
-                f"if test -f {target_q}; then echo existing; "
-                f"elif cp -f {remote_q} {target_q}; then echo installed; "
-                f"else echo failed; fi; rm -f {remote_q}; sync",
+                f"if test -f {target_q}; then echo existing; else echo missing; fi",
                 check=False,
             )
-            if state.endswith("installed"):
-                installed += 1
-            elif state.endswith("existing"):
+            if state.endswith("existing"):
                 kept += 1
+                continue
+            if not state.endswith("missing"):
+                raise InstallerError(f"could not install frontend music: {target}")
+            self.adb.push(source, target)
+            installed_state = self.adb.shell_text(
+                f"if test -f {target_q}; then echo installed; else echo failed; fi",
+                check=False,
+            )
+            if installed_state.endswith("installed"):
+                installed += 1
             else:
                 raise InstallerError(f"could not install frontend music: {target}")
         self.msg(f"  frontend music: {installed} copied, {kept} existing files kept")
@@ -1153,12 +1384,18 @@ class VamanOSInstaller:
         spec = self.manifest["artifacts"]["frontend_music"]
         for name in spec.get("files", {}):
             target = shlex.quote(f"{spec['device_path']}/{name}")
-            if not self.adb.shell_text(f"test -f {target} && echo yes", check=False).endswith("yes"):
-                raise InstallerError(f"frontend music is missing: {spec['device_path']}/{name}")
+            if not self.adb.shell_text(
+                f"test -f {target} && echo yes", check=False
+            ).endswith("yes"):
+                raise InstallerError(
+                    f"frontend music is missing: {spec['device_path']}/{name}"
+                )
 
     def install_retroarch_config(self, baseline: Path) -> None:
         """Merge the baseline cfg into the running shared config, preserving user bindings."""
-        cfg_path = "/storage/sdcard0/Android/data/com.retroarch.ra32/files/retroarch.cfg"
+        cfg_path = (
+            "/storage/sdcard0/Android/data/com.retroarch.ra32/files/retroarch.cfg"
+        )
         local = self.run_dir / "retroarch.cfg"
         overlay = baseline.read_text(encoding="utf-8")
         if self.adb.pull(cfg_path, local, check=False) and local.is_file():
@@ -1168,11 +1405,15 @@ class VamanOSInstaller:
             tmp = self.run_dir / "retroarch.merged.cfg"
             tmp.write_text(merged, encoding="utf-8")
             self.adb.push(tmp, "/data/local/tmp/vamanos-retroarch.cfg")
-            self.adb.shell_text(f"cp -f /data/local/tmp/vamanos-retroarch.cfg '{cfg_path}'; chmod 664 '{cfg_path}'; echo done")
+            self.adb.shell_text(
+                f"cp -f /data/local/tmp/vamanos-retroarch.cfg '{cfg_path}'; chmod 664 '{cfg_path}'; echo done"
+            )
         else:
             # no existing config -> write baseline directly
             self.adb.push(baseline, "/data/local/tmp/vamanos-retroarch-baseline.cfg")
-            self.adb.shell_text(f"cp -f /data/local/tmp/vamanos-retroarch-baseline.cfg \"{cfg_path}\"; echo done")
+            self.adb.shell_text(
+                f'cp -f /data/local/tmp/vamanos-retroarch-baseline.cfg "{cfg_path}"; echo done'
+            )
 
     def deploy_launchers(self, launchers: Path) -> None:
         self.adb.push(launchers, "/storage/sdcard1/ps202/configs/android_launchers.xml")
@@ -1196,7 +1437,9 @@ class VamanOSInstaller:
         after = self.snapshot_preserved_system_files("after")
         for remote, before_digest in self.preserved_system_digests.items():
             if after.get(remote) != before_digest:
-                raise InstallerError(f"preserved system file changed during install: {remote}")
+                raise InstallerError(
+                    f"preserved system file changed during install: {remote}"
+                )
 
     def backup_packages_before_removal(self) -> None:
         """Back up removable packages before pm uninstall, refusing unsafe removal."""
@@ -1212,7 +1455,9 @@ class VamanOSInstaller:
         records = []
         for package in config["remove"]:
             if package in set(config.get("protected", [])):
-                raise InstallerError(f"debloat configuration protects a removable package: {package}")
+                raise InstallerError(
+                    f"debloat configuration protects a removable package: {package}"
+                )
 
             apk_path = self.adb.package_path(package)
             if not apk_path:
@@ -1242,29 +1487,37 @@ class VamanOSInstaller:
                 f"touch {marker_q}; fi"
             )
             self.adb.shell_text(command, check=False)
-            if not self.adb.shell_text(f"test -f {marker_q} && echo yes", check=False).endswith("yes"):
+            if not self.adb.shell_text(
+                f"test -f {marker_q} && echo yes", check=False
+            ).endswith("yes"):
                 raise InstallerError(
                     f"backup failed for {package}; refusing to remove it. "
-                    f"Check {backup_root} and retry.")
+                    f"Check {backup_root} and retry."
+                )
 
             host_dir = host_root / package
             host_dir.mkdir(parents=True, exist_ok=True)
             host_apk = host_dir / "app.apk"
             host_apk_ok = self.adb.pull(apk_path, host_apk, check=False)
-            records.append({
-                "package": package,
-                "apk_source": apk_path,
-                "device_backup": f"{backup_root}/{package}",
-                "host_apk": str(host_apk) if host_apk_ok else None,
-                "data_restore_policy": "pm uninstall -k retains app data on Android 4.4.2",
-            })
+            records.append(
+                {
+                    "package": package,
+                    "apk_source": apk_path,
+                    "device_backup": f"{backup_root}/{package}",
+                    "host_apk": str(host_apk) if host_apk_ok else None,
+                    "data_restore_policy": "pm uninstall -k retains app data on Android 4.4.2",
+                }
+            )
             self.msg(f"  backed up {package} before removal")
 
-        write_json(self.run_dir / "removed-app-backup.json", {
-            "device_path": backup_root,
-            "host_path": str(host_root),
-            "packages": records,
-        })
+        write_json(
+            self.run_dir / "removed-app-backup.json",
+            {
+                "device_path": backup_root,
+                "host_path": str(host_root),
+                "packages": records,
+            },
+        )
 
     def apply_packages(self) -> None:
         disable = self.profile["debloat"]["disable"]
@@ -1278,7 +1531,9 @@ class VamanOSInstaller:
                 continue
             result = self.adb.shell(f"pm disable {pkg}", check=False)
             if result.returncode != 0:
-                raise InstallerError(f"could not disable package {pkg}: {result.stdout.strip()} {result.stderr.strip()}")
+                raise InstallerError(
+                    f"could not disable package {pkg}: {result.stdout.strip()} {result.stderr.strip()}"
+                )
             self.log(f"disabled package {pkg}")
         self.backup_packages_before_removal()
         for pkg in remove:
@@ -1289,10 +1544,13 @@ class VamanOSInstaller:
                 continue
             result = self.adb.shell(f"pm uninstall -k {pkg}", check=False)
             if result.returncode != 0:
-                raise InstallerError(f"could not remove package {pkg}: {result.stdout.strip()} {result.stderr.strip()}")
+                raise InstallerError(
+                    f"could not remove package {pkg}: {result.stdout.strip()} {result.stderr.strip()}"
+                )
             if self.adb.package_path(pkg):
                 raise InstallerError(
-                    f"package {pkg} is still installed after removal; no further apps were removed")
+                    f"package {pkg} is still installed after removal; no further apps were removed"
+                )
             self.log(f"removed package {pkg}")
         self.verify_package_changes()
 
@@ -1316,44 +1574,76 @@ class VamanOSInstaller:
                 raise InstallerError(f"package was not removed: {package}")
 
     def set_home(self) -> None:
-        # ES is the sole CATEGORY_HOME provider; make it the default. The
-        # `pm` fallback is useful on older Android toolbox builds where the
-        # `cmd` wrapper is present but does not expose this command.
-        command = "cmd package set-home-activity com.ps202.emulationstation/.PS202HomeActivity"
-        result = self.adb.shell(command, check=False)
-        output = (result.stdout + result.stderr).lower()
-        if result.returncode != 0 or any(word in output for word in ("unknown", "error", "not found", "failure")):
-            result = self.adb.shell(
-                "pm set-home-activity com.ps202.emulationstation/.PS202HomeActivity",
-                check=False)
-        output = (result.stdout + result.stderr).lower()
-        if result.returncode != 0 or any(word in output for word in ("unknown", "error", "not found", "failure")):
+        # Android 4.4.2 has neither `cmd package set-home-activity` nor the
+        # later `pm set-home-activity` command. The old HOME providers have
+        # already been removed/disabled above, so the standard HOME intent
+        # resolves directly to ES and makes it the appliance HOME.
+        result = self.adb.shell(HOME_INTENT, timeout=60, check=False)
+        output = result.stdout + result.stderr
+        if result.returncode != 0 or ES_HOME_COMPONENT not in output:
             raise InstallerError(
                 "could not set EmulationStation as the HOME app: "
-                f"{result.stdout.strip()} {result.stderr.strip()}")
+                f"{result.stdout.strip()} {result.stderr.strip()}"
+            )
 
     def verify_home(self) -> None:
-        """Check the configured HOME when this Android build reports it."""
-        output = self.adb.shell_text("cmd package get-home-activity", check=False)
-        if not output or any(word in output.lower() for word in ("unknown", "error", "not found")):
-            return
-        if "com.ps202.emulationstation" not in output:
-            raise InstallerError(f"EmulationStation is not the configured HOME app: {output}")
+        """Check HOME resolution using the Android 4.4-compatible HOME intent."""
+        result = self.adb.shell(HOME_INTENT, timeout=60, check=False)
+        output = result.stdout + result.stderr
+        if result.returncode != 0 or ES_HOME_COMPONENT not in output:
+            raise InstallerError(
+                f"EmulationStation is not the configured HOME app: {output.strip()}"
+            )
+
+    def installed_package_matches(self, key: str) -> bool:
+        """Return whether an installed APK is byte-identical to the bundle."""
+        if key in self.package_match_cache:
+            return self.package_match_cache[key]
+        spec = self.manifest.get("artifacts", {}).get(key, {})
+        package = spec.get("package")
+        expected = spec.get("sha256")
+        if not package or not expected:
+            self.package_match_cache[key] = False
+            return False
+        remote = self.adb.package_path(package)
+        if not remote:
+            self.package_match_cache[key] = False
+            return False
+        local = self.run_dir / f"installed-{key}.apk"
+        self.run_dir.mkdir(parents=True, exist_ok=True)
+        if not self.adb.pull(remote, local, check=False) or not local.is_file():
+            self.log(f"installed {key} could not be hashed; reinstall required")
+            self.package_match_cache[key] = False
+            return False
+        actual = sha256_file(local)
+        matches = actual == expected
+        self.log(f"installed {key} sha256={actual} expected={expected} match={matches}")
+        self.package_match_cache[key] = matches
+        return matches
 
     def install_apks(self) -> None:
         for key in ("emulationstation", "retroarch"):
+            if self.installed_package_matches(key):
+                self.msg(f"  keeping existing {key} (exact bundle match)")
+                continue
             apk = self.art(key)
             size = apk.stat().st_size // (1024 * 1024) if apk.is_file() else "download"
-            self.msg(f"  installing {key} ({size} MiB)" if isinstance(size, int)
-                     else f"  installing {key} ({size})")
+            self.msg(
+                f"  installing {key} ({size} MiB)"
+                if isinstance(size, int)
+                else f"  installing {key} ({size})"
+            )
             self.adb.install_apk(apk)
         if self.adb.package_path(PPSSPP_PACKAGE):
             self.msg("  keeping existing ppsspp")
             return
         apk = self.art("ppsspp")
         size = apk.stat().st_size // (1024 * 1024) if apk.is_file() else "bundled"
-        self.msg(f"  installing ppsspp ({size} MiB)" if isinstance(size, int)
-                 else f"  installing ppsspp ({size})")
+        self.msg(
+            f"  installing ppsspp ({size} MiB)"
+            if isinstance(size, int)
+            else f"  installing ppsspp ({size})"
+        )
         self.adb.install_apk(apk)
 
     def wait_for_boot_completed(self, timeout: int = 300) -> None:
@@ -1380,24 +1670,34 @@ class VamanOSInstaller:
         """Start HOME and require a new V2 first-frame record."""
         log_paths = (
             ("/storage/sdcard1/ps202/logs/v2-bootstrap.log", "v2-bootstrap-sd"),
-            ("/data/data/com.ps202.emulationstation/files/v2-bootstrap.log", "v2-bootstrap-private"),
+            (
+                "/data/data/com.ps202.emulationstation/files/v2-bootstrap.log",
+                "v2-bootstrap-private",
+            ),
         )
         before = {
             remote: self._pull_remote_text(remote, f"{name}-before.log")
             for remote, name in log_paths
         }
-        self.adb.shell("am start -n com.ps202.emulationstation/.PS202HomeActivity", check=False)
+        self.adb.shell(
+            "am start -n com.ps202.emulationstation/.PS202HomeActivity", check=False
+        )
         deadline = time.time() + timeout
         while time.time() < deadline:
             for remote, name in log_paths:
                 after = self._pull_remote_text(remote, f"{name}-after.log")
                 previous = before[remote]
-                if len(after) > len(previous) and b"first frame received; overlay hidden" in after[len(previous):]:
+                if (
+                    len(after) > len(previous)
+                    and b"first frame received; overlay hidden"
+                    in after[len(previous) :]
+                ):
                     return
             time.sleep(1)
         raise InstallerError(
             "EmulationStation did not report its first frame; the handheld may be stuck on "
-            "'Starting EmulationStation…'. Check the v2-bootstrap log.")
+            "'Starting EmulationStation…'. Check the v2-bootstrap log."
+        )
 
     def verify_boot_helper_ran(self, timeout: int = 90) -> None:
         """Confirm the init service executed the deployed helper to completion."""
@@ -1406,24 +1706,32 @@ class VamanOSInstaller:
         deadline = time.time() + timeout
         while time.time() < deadline:
             after = self._pull_remote_text(
-                "/data/local/tmp/ps202-boot.log", "boot-helper-after.log")
-            new = after[len(previous):] if len(after) >= len(previous) else after
+                "/data/local/tmp/ps202-boot.log", "boot-helper-after.log"
+            )
+            new = after[len(previous) :] if len(after) >= len(previous) else after
             if b"=== ps202-boot " in new and marker.encode("utf-8") in new:
                 return
             time.sleep(1)
         raise InstallerError(
-            "the PS202 boot helper has not completed; check /data/local/tmp/ps202-boot.log")
+            "the PS202 boot helper has not completed; check /data/local/tmp/ps202-boot.log"
+        )
 
     def verify(self, require_root: bool = True) -> None:
         if self.dry_run:
             return  # nothing is installed under --dry-run; nothing to verify
         if require_root and not self.adb.is_root():
             raise InstallerError("post-install ADB is not root")
-        for package in ("com.ps202.emulationstation", "com.retroarch.ra32", "org.ppsspp.ppsspp"):
+        for package in (
+            "com.ps202.emulationstation",
+            "com.retroarch.ra32",
+            "org.ppsspp.ppsspp",
+        ):
             if not self.adb.package_path(package):
                 raise InstallerError(f"installed package is missing: {package}")
         if self.adb.package_path("com.ps202.shell"):
-            raise InstallerError("PS202 Shell is still installed; the installer must remove it")
+            raise InstallerError(
+                "PS202 Shell is still installed; the installer must remove it"
+            )
         if require_root:
             self.verify_package_changes()
             self.verify_boot_helper_ran()
@@ -1431,14 +1739,29 @@ class VamanOSInstaller:
             if "uid=0" not in su_out:
                 raise InstallerError("su -c id did not return root")
             self.verify_android_bootanimation()
-            if "0" != self.adb.shell_text("test -f /data/local/ps202-boot.sh; echo $?", check=False)[-1:]:
+            if (
+                "0"
+                != self.adb.shell_text(
+                    "test -f /data/local/ps202-boot.sh; echo $?", check=False
+                )[-1:]
+            ):
                 raise InstallerError("PS202 boot helper is missing")
-            if "0" != self.adb.shell_text("test -f /data/local/ps202-performance.sh; echo $?", check=False)[-1:]:
+            if (
+                "0"
+                != self.adb.shell_text(
+                    "test -f /data/local/ps202-performance.sh; echo $?", check=False
+                )[-1:]
+            ):
                 raise InstallerError("PS202 performance profile is missing")
             # su + find must be present in /system/xbin (adbd lives in the boot
             # ramdisk and is proven by root-ADB being active above).
-            for bin_path, key in (("/system/xbin/su", "su"), ("/system/xbin/find", "find")):
-                present = self.adb.shell_text(f"test -f {bin_path} && echo yes", check=False).endswith("yes")
+            for bin_path, key in (
+                ("/system/xbin/su", "su"),
+                ("/system/xbin/find", "find"),
+            ):
+                present = self.adb.shell_text(
+                    f"test -f {bin_path} && echo yes", check=False
+                ).endswith("yes")
                 if not present:
                     raise InstallerError(f"{key} binary is missing at {bin_path}")
             cores = self.core_files()
@@ -1450,10 +1773,16 @@ class VamanOSInstaller:
         self.wait_for_frontend_first_frame()
         self.verify_cody_theme(require_active=True)
         self.verify_home()
-        act = self.adb.shell_text("dumpsys activity activities", timeout=30, check=False)
+        act = self.adb.shell_text(
+            "dumpsys activity activities", timeout=30, check=False
+        )
         if "com.ps202.emulationstation" not in act:
-            raise InstallerError("EmulationStation is not present in the activity dump after launch")
-        self.msg("Verification passed: root ADB (adbd), su + find, boot helper, packages, preserved controller map, V2 CODY theme, ES home.")
+            raise InstallerError(
+                "EmulationStation is not present in the activity dump after launch"
+            )
+        self.msg(
+            "Verification passed: root ADB (adbd), su + find, boot helper, packages, preserved controller map, V2 CODY theme, ES home."
+        )
 
     # -- top level ---------------------------------------------------------- #
     def report_cpu(self) -> None:
@@ -1467,22 +1796,36 @@ class VamanOSInstaller:
         rather than attempt a write that would fail.
         """
         base = "/sys/devices/system/cpu/cpu0/cpufreq"
-        gov = self.adb.shell_text(f"cat {base}/scaling_governor 2>/dev/null", check=False)
-        cur = self.adb.shell_text(f"cat {base}/scaling_cur_freq 2>/dev/null", check=False)
-        mx = self.adb.shell_text(f"cat {base}/cpuinfo_max_freq 2>/dev/null", check=False)
-        mn = self.adb.shell_text(f"cat {base}/cpuinfo_min_freq 2>/dev/null", check=False)
+        gov = self.adb.shell_text(
+            f"cat {base}/scaling_governor 2>/dev/null", check=False
+        )
+        cur = self.adb.shell_text(
+            f"cat {base}/scaling_cur_freq 2>/dev/null", check=False
+        )
+        mx = self.adb.shell_text(
+            f"cat {base}/cpuinfo_max_freq 2>/dev/null", check=False
+        )
+        mn = self.adb.shell_text(
+            f"cat {base}/cpuinfo_min_freq 2>/dev/null", check=False
+        )
         gov = gov.strip() if gov else "n/a"
         cur = cur.strip() if cur else "n/a"
         mx = mx.strip() if mx else "n/a"
         mn = mn.strip() if mn else "n/a"
         self.log(f"cpu: governor={gov} cur={cur} min={mn} max={mx}")
-        self.msg(f"CPU freq:     governor {gov}, now {self._fmt_mhz(cur)}, "
-                 f"range {self._fmt_mhz(mn)}–{self._fmt_mhz(mx)}")
+        self.msg(
+            f"CPU freq:     governor {gov}, now {self._fmt_mhz(cur)}, "
+            f"range {self._fmt_mhz(mn)}–{self._fmt_mhz(mx)}"
+        )
         if mx.isdigit() and cur.isdigit() and int(cur) >= int(mx):
-            self.msg(f"             already at the {self._fmt_mhz(mx)} hardware maximum; "
-                     "runtime overclock/pinning is blocked by the MTK cpufreq driver")
+            self.msg(
+                f"             already at the {self._fmt_mhz(mx)} hardware maximum; "
+                "runtime overclock/pinning is blocked by the MTK cpufreq driver"
+            )
         else:
-            self.msg("             (governor/frequency read from the MT6572 cpufreq sysfs)")
+            self.msg(
+                "             (governor/frequency read from the MT6572 cpufreq sysfs)"
+            )
 
     @staticmethod
     def _fmt_mhz(value: str) -> str:
@@ -1494,8 +1837,12 @@ class VamanOSInstaller:
         self.print_identity()
         root = self.adb.is_root()
         self.msg(f"Root ADB:     {'yes' if root else 'no'}")
-        self.msg(f"SD (/storage/sdcard1): {'mounted' if self.adb.shell_text('ls -d /storage/sdcard1 2>/dev/null', check=False) else 'not mounted'}")
-        self.msg(f"su on device: {'present' if self.adb.shell_text('test -x /system/xbin/su && echo yes', check=False).endswith('yes') else 'absent'}")
+        self.msg(
+            f"SD (/storage/sdcard1): {'mounted' if self.adb.shell_text('ls -d /storage/sdcard1 2>/dev/null', check=False) else 'not mounted'}"
+        )
+        self.msg(
+            f"su on device: {'present' if self.adb.shell_text('test -x /system/xbin/su && echo yes', check=False).endswith('yes') else 'absent'}"
+        )
         for mount in ("/data", "/storage/sdcard0", "/storage/sdcard1"):
             available = self.adb.free_bytes(mount)
             if available is None:
@@ -1510,14 +1857,27 @@ class VamanOSInstaller:
         self.report_cpu()
         if self.known:
             if root:
-                boot = self.read_current_region("boot", self.run_dir / "doctor-boot.bin")
-                state = "STOCK" if boot == self.profile["regions"]["boot"]["stock_sha256"] else (
-                    "PATCHED (root)" if boot == self.profile["regions"]["boot"]["patched_sha256"] else "UNKNOWN")
+                boot = self.read_current_region(
+                    "boot", self.run_dir / "doctor-boot.bin"
+                )
+                state = (
+                    "STOCK"
+                    if boot == self.profile["regions"]["boot"]["stock_sha256"]
+                    else (
+                        "PATCHED (root)"
+                        if boot == self.profile["regions"]["boot"]["patched_sha256"]
+                        else "UNKNOWN"
+                    )
+                )
                 self.msg(f"Boot region:  {state} ({boot[:16]}…)")
             else:
-                self.msg("Boot region:  unavailable without root ADB; install --boot-mode temproot will inspect it after bootstrap")
+                self.msg(
+                    "Boot region:  unavailable without root ADB; install --boot-mode temproot will inspect it after bootstrap"
+                )
             splash = self.run_dir / "doctor-bootanimation.zip"
-            if self.adb.pull(self.profile["android_boot_splash"]["path"], splash, check=False):
+            if self.adb.pull(
+                self.profile["android_boot_splash"]["path"], splash, check=False
+            ):
                 digest = sha256_file(splash)
                 expected = self.manifest["artifacts"]["android_bootanimation"]["sha256"]
                 splash_state = "CUSTOM vamanOS" if digest == expected else "OTHER"
@@ -1525,13 +1885,14 @@ class VamanOSInstaller:
             else:
                 self.msg("Android boot splash: unavailable")
 
-    def install(self, boot_mode: str = "auto",
-                confirmed: Optional[str] = None) -> None:
+    def install(self, boot_mode: str = "auto", confirmed: Optional[str] = None) -> None:
         self.run_dir.mkdir(parents=True, exist_ok=True)
         self.print_identity()
         pre = self.preflight(boot_mode=boot_mode)
         root = pre["root_adb"]
-        ppsspp_present = None if self.dry_run else bool(self.adb.package_path(PPSSPP_PACKAGE))
+        ppsspp_present = (
+            None if self.dry_run else bool(self.adb.package_path(PPSSPP_PACKAGE))
+        )
 
         if self.known:
             if boot_mode == "auto":
@@ -1546,8 +1907,14 @@ class VamanOSInstaller:
                     boot_mode = "temproot"
                 else:
                     raise InstallerError(f"unknown boot state: {boot_state}")
-            if boot_mode in ("force", "temproot") and not root and boot_mode != "temproot":
-                raise InstallerError("boot patching requires root ADB (use --boot-mode temproot on a factory unit)")
+            if (
+                boot_mode in ("force", "temproot")
+                and not root
+                and boot_mode != "temproot"
+            ):
+                raise InstallerError(
+                    "boot patching requires root ADB (use --boot-mode temproot on a factory unit)"
+                )
 
             if boot_mode == "temproot":
                 # Resolve and hash-check the helpers before asking for the
@@ -1561,26 +1928,34 @@ class VamanOSInstaller:
         # Resolve all files used by the install before asking for the
         # destructive confirmation token. This prevents a late missing-APK or
         # missing-core failure after boot/system files have already changed.
-        self.validate_install_artifacts(boot_mode, require_ppsspp=ppsspp_present is not True)
+        self.validate_install_artifacts(
+            boot_mode, require_ppsspp=ppsspp_present is not True
+        )
         self.preflight_storage(require_ppsspp=ppsspp_present is not True)
 
         # Plan
         self.msg("\n=== vamanOS install plan ===")
         plans = [
-            "1. Patch boot to root ADB (region 0x1D80000, 6 MiB)" if boot_mode in ("force", "temproot") else "1. Boot already patched (skip)",
+            "1. Patch boot to root ADB (region 0x1D80000, 6 MiB)"
+            if boot_mode in ("force", "temproot")
+            else "1. Boot already patched (skip)",
             "2. Install Android boot splash (/system/media/bootanimation.zip; no raw logo-region write)",
             "3. Install /system/xbin/su + /system/xbin/find (root)",
             "4. Deploy PS202 boot helper + performance profile (/data/local/)",
-            ("5. Install ES + RetroArch; keep the existing PPSSPP app"
-             if ppsspp_present is True else
-             "5. Install ES + RetroArch; install bundled PPSSPP only if missing"),
+            (
+                "5. Install ES + RetroArch; keep the existing PPSSPP app"
+                if ppsspp_present is True
+                else "5. Install ES + RetroArch; install bundled PPSSPP only if missing"
+            ),
             "6. Install RetroArch cores + menu music + V2 CODY theme + tune shared config (preserves input bindings)",
             "7. Back up removable apps, deploy launcher map + PS202 SD layout",
             "8. Remove old apps/game launcher + set ES as HOME",
         ]
         for p in plans:
             self.msg(f"  {p}")
-        self.msg("  Only the reviewed root boot region may be written; no logo region, preloader/lk/nvram, or user ROMs/saves/states/input maps are touched.")
+        self.msg(
+            "  Only the reviewed root boot region may be written; no logo region, preloader/lk/nvram, or user ROMs/saves/states/input maps are touched."
+        )
         token = Confirmation.request(self.serial, confirmed)
 
         # Firmware phase
@@ -1606,15 +1981,18 @@ class VamanOSInstaller:
             raise InstallerError("non-root ADB cannot complete the vamanOS setup")
 
         if root and not self.dry_run:
-            self.preserved_system_digests = self.snapshot_preserved_system_files("before")
+            self.preserved_system_digests = self.snapshot_preserved_system_files(
+                "before"
+            )
 
         # Software phase
         self.msg("[3/8] Installing su + system binaries (find)...")
         self.install_su(self.art("su"))
         self.install_aux_binaries()
         self.msg("[4/8] Deploying boot helper + performance profile...")
-        self.deploy_boot_helper(self.payload_file("boot_helper"),
-                                self.payload_file("performance_profile"))
+        self.deploy_boot_helper(
+            self.payload_file("boot_helper"), self.payload_file("performance_profile")
+        )
         self.msg("[5/8] Installing apps (this can take a few minutes)...")
         self.install_apks()
         self.msg("[6/8] Installing cores + config...")
@@ -1630,19 +2008,31 @@ class VamanOSInstaller:
         self.set_home()
 
         if self.dry_run:
-            self.msg("[dry-run] would reboot to start and verify the vamanOS boot helper")
-            write_json(self.run_dir / "result.json", {"status": "dry-run", "boot_mode": boot_mode})
+            self.msg(
+                "[dry-run] would reboot to start and verify the vamanOS boot helper"
+            )
+            write_json(
+                self.run_dir / "result.json",
+                {"status": "dry-run", "boot_mode": boot_mode},
+            )
             return
         self.boot_helper_log_before_reboot = self._pull_remote_text(
-            "/data/local/tmp/ps202-boot.log", "boot-helper-before-reboot.log")
+            "/data/local/tmp/ps202-boot.log", "boot-helper-before-reboot.log"
+        )
         self.msg("Rebooting once to start the vamanOS boot helper...")
         self.adb.reboot()
         self.wait_for_boot_completed()
         self.msg("\nVerifying install...")
         self.verify(require_root=True)
-        write_json(self.run_dir / "result.json", {"status": "installed", "boot_mode": boot_mode,
-                                                  "final_reboot_verified": True,
-                                                  "log": str(self.run_dir / "installer.log")})
+        write_json(
+            self.run_dir / "result.json",
+            {
+                "status": "installed",
+                "boot_mode": boot_mode,
+                "final_reboot_verified": True,
+                "log": str(self.run_dir / "installer.log"),
+            },
+        )
         self.msg(f"\nDone. Details in {self.run_dir}")
 
     def install_splash(self, confirmed: Optional[str] = None) -> None:
@@ -1651,17 +2041,23 @@ class VamanOSInstaller:
         if not self.known and not self.dry_run:
             raise InstallerError("Android boot splash is only supported on PS202_00001")
         if not self.dry_run and not self.adb.is_root():
-            raise InstallerError("splash-only install requires root ADB; no boot image changes were made")
+            raise InstallerError(
+                "splash-only install requires root ADB; no boot image changes were made"
+            )
 
         self.msg("\n=== vamanOS Android boot splash plan ===")
         self.msg("  Replace /system/media/bootanimation.zip with the video animation")
-        self.msg("  Preserve the existing file as /system/media/bootanimation.zip.vamanos-previous")
+        self.msg(
+            "  Preserve the existing file as /system/media/bootanimation.zip.vamanos-previous"
+        )
         self.msg("  Do not read or write any raw flash region")
         Confirmation.request(self.serial, confirmed)
         self.msg("Installing Android boot splash...")
         self.install_android_bootanimation()
         if not self.dry_run:
-            self.msg(f"Android boot splash verified: {self.verify_android_bootanimation()}")
+            self.msg(
+                f"Android boot splash verified: {self.verify_android_bootanimation()}"
+            )
 
     def restore_boot(self, confirmed: Optional[str] = None) -> None:
         """Restore the exact reviewed stock boot region on a rooted PS202."""
@@ -1671,9 +2067,14 @@ class VamanOSInstaller:
             raise InstallerError("stock boot restore is only supported on PS202_00001")
         if not self.dry_run and not self.adb.is_root():
             raise InstallerError(
-                "stock boot restore needs root ADB. If Android cannot boot, this command cannot reach the device.")
+                "stock boot restore needs root ADB. If Android cannot boot, this command cannot reach the device."
+            )
 
-        current = self.read_current_region("boot", self.run_dir / "boot-before-restore.bin") if not self.dry_run else ""
+        current = (
+            self.read_current_region("boot", self.run_dir / "boot-before-restore.bin")
+            if not self.dry_run
+            else ""
+        )
         stock_hash = self.profile["regions"]["boot"]["stock_sha256"]
         patched_hash = self.profile["regions"]["boot"]["patched_sha256"]
         if current == stock_hash:
@@ -1681,22 +2082,33 @@ class VamanOSInstaller:
             return
         if current and current != patched_hash:
             raise InstallerError(
-                f"refusing to restore an unknown boot image ({current[:16]}…). Only the reviewed vamanOS image may be replaced.")
+                f"refusing to restore an unknown boot image ({current[:16]}…). Only the reviewed vamanOS image may be replaced."
+            )
 
         self.msg("\n=== Restore stock PS202 boot ===")
-        self.msg("  Replace only the reviewed 6 MiB boot region with the bundled stock image")
+        self.msg(
+            "  Replace only the reviewed 6 MiB boot region with the bundled stock image"
+        )
         self.msg("  Verify the write by reading the entire region back")
-        self.msg("  Reboot into the original factory boot (root ADB will no longer be available)")
+        self.msg(
+            "  Reboot into the original factory boot (root ADB will no longer be available)"
+        )
         Confirmation.request(self.serial, confirmed, action="RESTORE")
         source = self.art("boot_stock")
         self.write_region("boot", source)
-        readback = self.read_current_region("boot", self.run_dir / "boot-restore-readback.bin")
+        readback = self.read_current_region(
+            "boot", self.run_dir / "boot-restore-readback.bin"
+        )
         if readback != stock_hash:
-            raise InstallerError(f"stock boot readback SHA-256 {readback} != expected {stock_hash}")
+            raise InstallerError(
+                f"stock boot readback SHA-256 {readback} != expected {stock_hash}"
+            )
         self.msg("Stock boot verified. Rebooting...")
         self.adb.reboot()
         self.adb.wait_for_device(timeout=300)
-        self.msg("Stock boot restored. The original factory ADB behavior is expected now.")
+        self.msg(
+            "Stock boot restored. The original factory ADB behavior is expected now."
+        )
 
     def log_path(self) -> Path:
         return self.run_dir / "installer.log"
@@ -1711,14 +2123,26 @@ class VamanOSInstaller:
         try:
             # Keep the engine, manifest, profile, launchers, and README beside
             # the payload so an extracted release can run by itself.
-            for name in ("vamanos_installer.py", "manifest.json", "device-profile.json",
-                         "README.md", "ADB-SETUP.md", "install.sh", "install.ps1",
-                         "install.cmd", "recover-bootloop.sh", "AGENTS.md",
-                         "CREDITS.md", "video.mp4"):
+            for name in (
+                "vamanos_installer.py",
+                "manifest.json",
+                "device-profile.json",
+                "README.md",
+                "ADB-SETUP.md",
+                "install.sh",
+                "install.ps1",
+                "install.cmd",
+                "recover-bootloop.sh",
+                "AGENTS.md",
+                "CREDITS.md",
+                "video.mp4",
+            ):
                 shutil.copy2(INSTALLER_DIR / name, tmp / name)
             (tmp / "assets").mkdir()
-            shutil.copy2(INSTALLER_DIR / "assets" / "vamanos_boot.webp",
-                         tmp / "assets" / "vamanos_boot.webp")
+            shutil.copy2(
+                INSTALLER_DIR / "assets" / "vamanos_boot.webp",
+                tmp / "assets" / "vamanos_boot.webp",
+            )
             (bundle / "apks").mkdir(parents=True)
             (bundle / "cores").mkdir(parents=True)
             (bundle / "boot").mkdir(parents=True)
@@ -1733,23 +2157,45 @@ class VamanOSInstaller:
             for short, core in self.core_files().items():
                 shutil.copy2(core, bundle / "cores" / core.name)
             # boot region images + Android userspace boot splash
-            for key, filename in (("boot_stock", "boot_stock.img"),
-                                  ("boot_patched", "boot_patched.img"),
-                                  ("android_bootanimation", "android_bootanimation.zip")):
+            for key, filename in (
+                ("boot_stock", "boot_stock.img"),
+                ("boot_patched", "boot_patched.img"),
+                ("android_bootanimation", "android_bootanimation.zip"),
+            ):
                 shutil.copy2(self.art(key), bundle / "boot" / filename)
-            for key in ("patched_adbd", "find", "su", "temproot_cowtest", "temproot_blockdump"):
+            for key in (
+                "patched_adbd",
+                "find",
+                "su",
+                "temproot_cowtest",
+                "temproot_blockdump",
+            ):
                 source = self.art(key)
                 shutil.copy2(source, bundle / "bin" / source.name)
             for name, source in self.frontend_music_files().items():
                 shutil.copy2(source, bundle / "music" / name)
             shutil.copy2(self.art("cody_theme"), bundle / "themes" / "EPIC-CODY.zip")
             # payload configs
-            for name in ("ps202-init.sh", "retroarch-baseline.cfg", "android_launchers.xml"):
-                shutil.copy2(self.payload_file({"ps202-init.sh": "init_script",
-                                                "retroarch-baseline.cfg": "retroarch_baseline",
-                                                "android_launchers.xml": "launcher_config"}[name]), bundle / name)
+            for name in (
+                "ps202-init.sh",
+                "retroarch-baseline.cfg",
+                "android_launchers.xml",
+            ):
+                shutil.copy2(
+                    self.payload_file(
+                        {
+                            "ps202-init.sh": "init_script",
+                            "retroarch-baseline.cfg": "retroarch_baseline",
+                            "android_launchers.xml": "launcher_config",
+                        }[name]
+                    ),
+                    bundle / name,
+                )
             shutil.copy2(self.payload_file("boot_helper"), bundle / "ps202-boot.sh")
-            shutil.copy2(self.payload_file("performance_profile"), bundle / "ps202-performance.sh")
+            shutil.copy2(
+                self.payload_file("performance_profile"),
+                bundle / "ps202-performance.sh",
+            )
 
             # write a bundle manifest with hashes for every release file. The
             # installer uses the payload entries before touching the device;
@@ -1768,7 +2214,9 @@ class VamanOSInstaller:
                     for f in files:
                         p = Path(root) / f
                         zf.write(p, p.relative_to(tmp).as_posix())
-            self.msg(f"Assembled {output} ({output.stat().st_size // (1024*1024)} MiB)")
+            self.msg(
+                f"Assembled {output} ({output.stat().st_size // (1024 * 1024)} MiB)"
+            )
             return output
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
@@ -1797,14 +2245,21 @@ class Confirmation:
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="vamanos",
-                                     description="vamanOS for R36S PS202 installer")
+    parser = argparse.ArgumentParser(
+        prog="vamanos", description="vamanOS for R36S PS202 installer"
+    )
     parser.add_argument("--adb", default="adb", help="path to adb binary")
     parser.add_argument("--serial", help="ADB serial when more than one device")
-    parser.add_argument("--dry-run", action="store_true", help="print commands without running them")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="print commands without running them"
+    )
     parser.add_argument("--quiet", action="store_true", help="suppress progress output")
-    parser.add_argument("--bundle", type=Path, default=None,
-                        help="run from an extracted `assemble` bundle directory instead of the workspace")
+    parser.add_argument(
+        "--bundle",
+        type=Path,
+        default=None,
+        help="run from an extracted `assemble` bundle directory instead of the workspace",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_doc = sub.add_parser("doctor", help="read-only device health check")
@@ -1816,20 +2271,30 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
     p_inst = sub.add_parser("install", help="install vamanOS")
     boot_group = p_inst.add_mutually_exclusive_group()
-    boot_group.add_argument("--boot-mode", choices=["auto", "force", "temproot", "skip"],
-                             default="auto",
-                             help="auto: skip if already rooted, temproot on stock factory. force: rewrite patched boot. "
-                                  "temproot: use dirtycow bootstrap on a factory unit. skip: assume already rooted.")
-    boot_group.add_argument("--temproot", dest="legacy_temproot", action="store_true",
-                            help="legacy alias for --boot-mode temproot")
+    boot_group.add_argument(
+        "--boot-mode",
+        choices=["auto", "force", "temproot", "skip"],
+        default="auto",
+        help="auto: skip if already rooted, temproot on stock factory. force: rewrite patched boot. "
+        "temproot: use dirtycow bootstrap on a factory unit. skip: assume already rooted.",
+    )
+    boot_group.add_argument(
+        "--temproot",
+        dest="legacy_temproot",
+        action="store_true",
+        help="legacy alias for --boot-mode temproot",
+    )
     p_inst.add_argument("--confirm", help="non-interactive confirmation token")
     p_inst.set_defaults(func="install")
 
     p_ver = sub.add_parser("verify", help="verify a finished install")
     p_ver.set_defaults(func="verify")
 
-    p_restore = sub.add_parser("restore-boot", aliases=["rollback"],
-                               help="restore the exact stock PS202 boot image")
+    p_restore = sub.add_parser(
+        "restore-boot",
+        aliases=["rollback"],
+        help="restore the exact stock PS202 boot image",
+    )
     p_restore.add_argument("--confirm", help="non-interactive confirmation token")
     p_restore.set_defaults(func="restore_boot")
 
@@ -1842,11 +2307,17 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = _build_arg_parser().parse_args(argv)
+    if not args.quiet:
+        print_banner()
     try:
         bundle_root = args.bundle.resolve() if args.bundle else discover_bundle_root()
-        installer = VamanOSInstaller(adb=args.adb, serial=args.serial,
-                                     dry_run=args.dry_run, quiet=args.quiet,
-                                     bundle_root=bundle_root)
+        installer = VamanOSInstaller(
+            adb=args.adb,
+            serial=args.serial,
+            dry_run=args.dry_run,
+            quiet=args.quiet,
+            bundle_root=bundle_root,
+        )
         if args.func == "doctor":
             installer.doctor()
         elif args.func == "splash":

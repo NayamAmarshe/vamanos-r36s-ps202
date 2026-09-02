@@ -75,21 +75,21 @@ handheld reboots at the end to start vamanOS correctly.
 
 Put games in the matching folder on the SD card:
 
-| System | Folder |
-| --- | --- |
-| NES | `roms/nes` |
-| SNES | `roms/snes` |
-| Genesis / Mega Drive | `roms/genesis` or `roms/megadrive` |
-| Game Boy / Color / Advance | `roms/gb`, `roms/gbc`, or `roms/gba` |
-| PlayStation | `roms/psx` |
-| PSP | `roms/psp` |
+| System                             | Folder                                                               |
+| ---------------------------------- | -------------------------------------------------------------------- |
+| NES                                | `roms/nes`                                                           |
+| SNES                               | `roms/snes`                                                          |
+| Genesis / Mega Drive               | `roms/genesis` or `roms/megadrive`                                   |
+| Game Boy / Color / Advance         | `roms/gb`, `roms/gbc`, or `roms/gba`                                 |
+| PlayStation                        | `roms/psx`                                                           |
+| PSP                                | `roms/psp`                                                           |
 | Arcade / CPS1 / CPS2 / CPS3 / MAME | `roms/arcade`, `roms/CPS1`, `roms/CPS2`, `roms/CPS3`, or `roms/mame` |
-| Master System / Game Gear | `roms/SMS` or `roms/gamegear` |
-| Atari 2600 / Lynx | `roms/atari2600` or `roms/atarilynx` |
-| Neo Geo Pocket | `roms/ngpc` |
-| PC Engine | `roms/pcengine` |
-| ColecoVision | `roms/COLECOVISION` |
-| WonderSwan | `roms/wonder` |
+| Master System / Game Gear          | `roms/SMS` or `roms/gamegear`                                        |
+| Atari 2600 / Lynx                  | `roms/atari2600` or `roms/atarilynx`                                 |
+| Neo Geo Pocket                     | `roms/ngpc`                                                          |
+| PC Engine                          | `roms/pcengine`                                                      |
+| ColecoVision                       | `roms/COLECOVISION`                                                  |
+| WonderSwan                         | `roms/wonder`                                                        |
 
 The full path is `/storage/sdcard1/roms/...`. BIOS files go in
 `/storage/sdcard1/ps202/bios`.

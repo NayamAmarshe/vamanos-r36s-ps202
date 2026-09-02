@@ -18,8 +18,6 @@ to use. Your games, saves, and controller settings stay in place.
 This installer is for the **R36S PS202**, also called **PS202** or **TICHIPS**.
 The supported device should have:
 
-The supported device shows:
-
 - Model: `PS202`
 - Build: `PS202_00001`
 - Android: `4.4.2`

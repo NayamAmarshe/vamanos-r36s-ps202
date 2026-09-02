@@ -4,10 +4,6 @@ Made by **Nayam Amarshe**.
 
 ![vamanOS boot screen](assets/vamanos_boot.webp)
 
-<video autoplay loop muted playsinline>
-  <source src="video.mp4" type="video/mp4">
-</video>
-
 vamanOS is a simple firmware update for R36S PS202 handhelds. These devices
 are unofficial clones of the original R36S. They come with Android 4.4,
 Wi-Fi, and Bluetooth, but their factory software is limited and leaves very

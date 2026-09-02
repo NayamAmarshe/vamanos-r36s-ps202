@@ -4,13 +4,19 @@ Made by **Nayam Amarshe**.
 
 ![vamanOS boot screen](assets/vamanos_boot.webp)
 
-vamanOS is a simple game system for the R36S PS202. It gives the handheld a
-clean game menu, opens games with RetroArch or PPSSPP, and keeps your games,
-saves, and controller settings in place.
+vamanOS is a simple firmware update for R36S PS202 handhelds. These devices
+are unofficial clones of the original R36S. They come with Android 4.4,
+Wi-Fi, and Bluetooth, but their factory software is limited and leaves very
+little room for improvements.
+
+That is why vamanOS was made. It gives the handheld a clean game menu, opens
+games with RetroArch or PPSSPP, and makes the Android 4.4 handheld much nicer
+to use. Your games, saves, and controller settings stay in place.
 
 ## Which device is this for?
 
 This installer is for the **R36S PS202**, also called **PS202** or **TICHIPS**.
+The supported device should have:
 
 The supported device shows:
 
@@ -22,12 +28,7 @@ The supported device shows:
 - Built-in wireless: Wi-Fi and Bluetooth
 
 The installer checks the device before it starts. It is not for other R36S
-models or other handhelds.
-
-If this looks like your device, you’re good to go!
-
-This guide is for beginners. It shows how to install vamanOS on an **R36S
-PS202** handheld.
+models or other handhelds. If this looks like your device, you’re good to go!
 
 ## Before you start
 

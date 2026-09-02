@@ -46,6 +46,8 @@ for the same steps.
 - Keep the vendor emulator installed.
 - Keep an existing `org.ppsspp.ppsspp` installation. Install the bundled
   PPSSPP APK only when that package is missing.
+- Download RetroArch only from the pinned URL in `manifest.json`. Verify its
+  SHA-256 before installing it; do not replace it with a newer build.
 - If the installer stops, read the error and report it. Do not blindly retry.
 - If the handheld is stuck during startup, run `./recover-bootloop.sh doctor`
   first. It is read-only.

@@ -42,6 +42,8 @@ import subprocess
 import sys
 import tempfile
 import time
+from urllib.error import URLError
+from urllib.request import Request, urlopen
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -447,7 +449,6 @@ class VamanOSInstaller:
             return None
         mapping = {
             "emulationstation": "payload/apks/emulationstation.apk",
-            "retroarch": "payload/apks/retroarch.apk",
             "ppsspp": "payload/apks/ppsspp.apk",
             "su": "payload/bin/su",
             "patched_adbd": "payload/bin/adbd",
@@ -465,24 +466,63 @@ class VamanOSInstaller:
         candidate = self.bundle_root / rel
         return candidate if candidate.is_file() else None
 
+    def _download_artifact(self, key: str, spec: dict, target: Path) -> None:
+        """Download a pinned artifact into a local cache and verify it later."""
+        url = spec.get("url")
+        if not url:
+            raise InstallerError(f"artifact {key} is missing: {target}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        fd, temporary_name = tempfile.mkstemp(
+            prefix=f".{target.name}.", suffix=".part", dir=str(target.parent))
+        temporary = Path(temporary_name)
+        try:
+            self.msg(f"  downloading {key} from the official source")
+            request = Request(url, headers={"User-Agent": "vamanOS-installer/1.0"})
+            with urlopen(request, timeout=300) as response, os.fdopen(fd, "wb") as stream:
+                while True:
+                    chunk = response.read(1 << 20)
+                    if not chunk:
+                        break
+                    stream.write(chunk)
+            temporary.replace(target)
+        except (OSError, URLError) as exc:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            raise InstallerError(f"could not download {key} from {url}: {exc}") from exc
+        finally:
+            temporary.unlink(missing_ok=True)
+
     def art(self, key: str) -> Path:
         """Resolve an artifact and verify its pinned SHA-256.
 
         Precedence: an extracted bundle (--bundle) first, then the workspace
-        source path, then the manifest's fallback list.
+        source/cache path, then a pinned download URL, then the manifest's
+        fallback list.
         """
         spec = self.manifest["artifacts"][key]
         bundled = self._bundle_artifact(key)
-        source = bundled if bundled is not None else resolve_path(spec["source"], INSTALLER_DIR)
+        if bundled is not None:
+            source = bundled
+        else:
+            source_value = spec.get("source") or spec.get("download")
+            if not source_value:
+                raise InstallerError(f"artifact {key} has no source or download path")
+            base = self.bundle_root or INSTALLER_DIR
+            source = resolve_path(source_value, base)
         if not source.is_file():
             if bundled is None:
-                for fallback in spec.get("fallback", []):
-                    candidate = resolve_path(fallback, INSTALLER_DIR) if not Path(fallback).is_absolute() else Path(fallback)
-                    if candidate.is_file():
-                        source = candidate
-                        break
+                if spec.get("url"):
+                    self._download_artifact(key, spec, source)
                 else:
-                    raise InstallerError(f"artifact {key} missing: {source}")
+                    for fallback in spec.get("fallback", []):
+                        candidate = resolve_path(fallback, INSTALLER_DIR) if not Path(fallback).is_absolute() else Path(fallback)
+                        if candidate.is_file():
+                            source = candidate
+                            break
+                    else:
+                        raise InstallerError(f"artifact {key} missing: {source}")
             else:
                 raise InstallerError(f"bundle artifact {key} missing: {source}")
         expected = spec.get("sha256")
@@ -1257,7 +1297,7 @@ class VamanOSInstaller:
             (bundle / "bin").mkdir(parents=True)
             (bundle / "themes").mkdir(parents=True)
             # APKs
-            for key in ("emulationstation", "retroarch", "ppsspp"):
+            for key in ("emulationstation", "ppsspp"):
                 src = self.art(key)
                 shutil.copy2(src, bundle / "apks" / f"{key}.apk")
             # cores

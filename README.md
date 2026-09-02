@@ -37,6 +37,8 @@ PS202** handheld.
 4. Unzip it into a folder.
 5. Connect the handheld with a USB data cable. Keep it connected during the
    install.
+6. Keep the computer online. The installer downloads the tested RetroArch
+   version during the install.
 
 The installer is only for the R36S PS202. Do not use it on another handheld.
 
@@ -87,7 +89,7 @@ the install is finished.
 vamanOS adds:
 
 - A game menu
-- RetroArch and the PS202's PPSSPP app
+- RetroArch 1.20.0 and the PS202's PPSSPP app
 - Game cores and the CODY theme
 - Root ADB and the small tools vamanOS needs
 - Faster startup and game loading

@@ -3,6 +3,7 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest.mock import patch
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -31,18 +32,19 @@ class ManifestProfileTests(unittest.TestCase):
 
     def test_retroarch_is_the_pinned_api19_build(self):
         artifact = MANIFEST["artifacts"]["retroarch"]
-        self.assertEqual("release-inputs/apks/retroarch.apk", artifact["source"])
+        self.assertNotIn("source", artifact)
+        self.assertEqual("downloads/retroarch-ra32-1.20.0.apk", artifact["download"])
+        self.assertEqual(
+            "https://buildbot.libretro.com/stable/1.20.0/android/RetroArch_ra32.apk",
+            artifact["url"],
+        )
         self.assertEqual("com.retroarch.ra32", artifact["package"])
         self.assertEqual("1.20.0_GIT", artifact["version_name"])
         self.assertEqual(11, artifact["version_code"])
-        apk = (INSTALLER / artifact["source"]).resolve()
-        if not apk.is_file():
-            self.skipTest("packaged RetroArch APK not present")
-        self.assertEqual(artifact["sha256"], inst.sha256_file(apk))
-        with zipfile.ZipFile(apk) as archive:
-            manifest = archive.read("AndroidManifest.xml")
-        self.assertIn("com.retroarch.ra32".encode("utf-16le"), manifest)
-        self.assertIn("1.20.0_GIT".encode("utf-16le"), manifest)
+        self.assertEqual(
+            "cbcf1cf1aac3e9afe447051cae12ee069039dbc22132d92af856cab26cae45df",
+            artifact["sha256"],
+        )
 
     def test_profile_is_ps202_00001(self):
         self.assertEqual("PS202_00001", PROFILE["id"])
@@ -229,6 +231,45 @@ class AdbClientTests(unittest.TestCase):
         client = inst.AdbClient("adb", runner=runner)
         self.assertEqual("0123456789ABCDEF", client.get_serialno())
         self.assertIn("get-serialno", runner.args)
+
+
+class DownloadTests(unittest.TestCase):
+    def test_downloads_retroarch_to_cache_and_checks_hash(self):
+        data = b"known-good-retroarch-apk"
+
+        class FakeResponse:
+            def __init__(self):
+                self.remaining = data
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self, size):
+                chunk, self.remaining = self.remaining[:size], self.remaining[size:]
+                return chunk
+
+        with tempfile.TemporaryDirectory() as directory:
+            installer = inst.VamanOSInstaller.__new__(inst.VamanOSInstaller)
+            installer.manifest = {
+                "artifacts": {
+                    "retroarch": {
+                        "download": "downloads/retroarch.apk",
+                        "url": "https://example.invalid/retroarch.apk",
+                        "sha256": inst.hashlib.sha256(data).hexdigest(),
+                    }
+                }
+            }
+            installer.bundle_root = Path(directory)
+            installer.msg = lambda *args, **kwargs: None
+            with patch.object(inst, "urlopen", return_value=FakeResponse()) as open_url:
+                result = installer.art("retroarch")
+                self.assertEqual(data, result.read_bytes())
+
+        open_url.assert_called_once()
+        self.assertEqual("https://example.invalid/retroarch.apk", open_url.call_args.args[0].full_url)
 
 
 class AppInstallTests(unittest.TestCase):

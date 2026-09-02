@@ -186,8 +186,9 @@ recover() {
   log "[4/4] Recovery complete. Snapshot + log in $RUN_DIR"
   log "  The next cold boot should reach Android. If it still loops, the cause"
   log "  is outside these userspace files (e.g. a boot-region/init change):"
-  log "  inspect ${RUN_DIR}/recovery.log and the .on-device snapshots, then"
-  log "  consider the ROLLBACK-BOOT.md boot-image restore path."
+  log "  inspect ${RUN_DIR}/recovery.log and the .on-device snapshots. If Android"
+  log "  can still boot with root ADB, use ./install.sh restore-boot for the"
+  log "  reviewed stock image."
 }
 
 # ---------------------------- main ------------------------------------------ #

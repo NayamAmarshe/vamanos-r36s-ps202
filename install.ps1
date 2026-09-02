@@ -3,7 +3,14 @@
 $ErrorActionPreference = "Stop"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
-$pythonCommand = Get-Command python3 -ErrorAction SilentlyContinue
+$pythonArguments = @()
+$pythonCommand = Get-Command py -ErrorAction SilentlyContinue
+if ($pythonCommand) {
+    $pythonArguments = @("-3")
+}
+if (-not $pythonCommand) {
+    $pythonCommand = Get-Command python3 -ErrorAction SilentlyContinue
+}
 if (-not $pythonCommand) {
     $pythonCommand = Get-Command python -ErrorAction SilentlyContinue
 }
@@ -11,5 +18,5 @@ if (-not $pythonCommand) {
     throw "Python 3 is required but was not found on PATH."
 }
 
-& $pythonCommand.Source (Join-Path $scriptDir "vamanos_installer.py") @args
+& $pythonCommand.Source @pythonArguments (Join-Path $scriptDir "vamanos_installer.py") @args
 exit $LASTEXITCODE

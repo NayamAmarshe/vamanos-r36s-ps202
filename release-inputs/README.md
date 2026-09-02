@@ -21,14 +21,13 @@ PPSSPP and uses this bundled copy only as a fallback when PPSSPP is missing.
   vendor partition, SHA-256 `7966aa71…`). It is installed only when the
   handheld does not already have PPSSPP. Its `manifest.json` source is this
   release-input path.
-- `cores-api19/` — the ARMv7/API-19-compatible cores staged for the
-  RetroArch launch map. These are extracted from the pinned factory
-  `GameCenter_Launcher.apk` backup; the newer buildbot cores in `cores/` are
-  not usable on this Android 4.4.2 device because they import libc symbols
-  introduced after API 19. TGB Dual supplies both GB and GBC, while gpSP
-  supplies GBA.
-- `cores/` — optional newer/reference cores. Keep them available for
-  comparison, but do not put them ahead of `cores-api19/` in the manifest.
+- `cores-api19/` — the ARMv7/API-19-compatible cores used for the main
+  consoles. These are preferred whenever the same core exists in both folders.
+  TGB Dual supplies both GB and GBC, while gpSP supplies GBA.
+- `cores/` — the additional checked cores used for arcade, Atari, Master
+  System, Game Gear, Neo Geo Pocket, PC Engine, ColecoVision, and WonderSwan.
+  The installer copies every launcher core into RetroArch's private runtime
+  directory, then checks its checksum.
 - `themes/EPIC-CODY.zip` — the pinned V2 format-7 CODY theme archive staged by
   the installer at `/storage/sdcard1/ps202/themes/EPIC-CODY.zip`.
 - `music/` — the 12 menu music tracks used by the frontend, copied to
@@ -46,9 +45,9 @@ verifies every artifact before use and aborts on a mismatch.
 
 - **live `su`**: `adb pull /system/xbin/su` from a root-ADB reference device.
 - **cores**: extract the API-19 set from the preserved factory APK, or pull
-  the already verified files from a root-ADB reference device. Do not use the
-  current buildbot files in `tools/cores-x` for PS202 runtime deployment;
-  several import symbols that they require are absent from Android 4.4.2.
+  the already verified files from a root-ADB reference device. The additional
+  files in `cores/` must also be tested on the PS202 before their hashes are
+  changed.
 - **touchbridge**: the exact default binaries are available from the nested
   `tools/touchbridge` Git checkout and are copied into `../payload/bin/` for
   distribution. If rebuilding or replacing them, use only the matching

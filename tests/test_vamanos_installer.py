@@ -50,6 +50,18 @@ class ManifestProfileTests(unittest.TestCase):
         self.assertEqual("PS202_00001", PROFILE["id"])
         self.assertEqual("armeabi-v7a", PROFILE["identity"]["abi"])
 
+    def test_retroarch_baseline_binds_ps202_volume_keys(self):
+        baseline = (INSTALLER / "payload/retroarch-baseline.cfg").read_text(encoding="utf-8")
+        self.assertIn('input_volume_up = "volumeup"', baseline)
+        self.assertIn('input_volume_down = "volumedown"', baseline)
+        self.assertIn('audio_driver = "opensl"', baseline)
+
+        helper = (INSTALLER / "payload/ps202-boot.sh").read_text(encoding="utf-8")
+        self.assertIn('input_volume_up = "volumeup"', helper)
+        self.assertIn('input_volume_down = "volumedown"', helper)
+        self.assertIn('audio_driver = "opensl"', helper)
+        self.assertIn('audio_driver\\ =\\ *)', helper)
+
     def test_boot_region_offsets_are_exact(self):
         boot = PROFILE["regions"]["boot"]
         self.assertEqual(0x01D80000, boot["offset"])   # 30932992 bytes = 60416 sectors
@@ -151,18 +163,35 @@ class ManifestProfileTests(unittest.TestCase):
         self.assertIn("com.xugame.gameconsole", PROFILE["debloat"]["protected"])
 
     def test_seven_cores_referenced_by_launchers_are_in_manifest(self):
-        # The device launcher map needs exactly these seven cores.
+        # The complete device launcher map needs every packaged core.
         cores = MANIFEST["cores"]
         for name in ("fceumm", "snes9x", "gambatte", "gpsp", "pcsx_rearmed", "picodrive", "mgba"):
             self.assertIn(name, cores)
         self.assertEqual("tgbdual_libretro_android.so", cores["gambatte"])
 
+    def test_every_supported_system_has_a_pinned_launcher_and_core(self):
+        installer = inst.VamanOSInstaller.__new__(inst.VamanOSInstaller)
+        installer.manifest = MANIFEST
+        installer.bundle_root = None
+        installer.bundle_hashes = None
+        installer.log = lambda *args, **kwargs: None
+        cores = installer.core_files()
+        installer.validate_launcher_config(INSTALLER / "payload/android_launchers.xml", cores)
+        self.assertEqual(22, len(MANIFEST["supported_systems"]))
+        self.assertEqual(15, len(cores))
+
+    def test_rom_layout_matches_frontend_paths(self):
+        layout = set(MANIFEST["sd_layout"])
+        self.assertIn("roms/CPS1", layout)
+        self.assertIn("roms/COLECOVISION", layout)
+        self.assertNotIn("ps202/roms/nes", layout)
+
     def test_api19_core_source_precedes_newer_buildbot_inputs(self):
         sources = MANIFEST["core_sources"]
         self.assertEqual("release-inputs/cores-api19", sources[0])
         launcher = (INSTALLER / "payload/android_launchers.xml").read_text(encoding="utf-8")
-        self.assertIn('value="tgbdual_libretro_android.so"', launcher)
-        self.assertIn('value="gpsp_libretro_android.so"', launcher)
+        self.assertIn('core="tgbdual_libretro_android.so"', launcher)
+        self.assertIn('core="gpsp_libretro_android.so"', launcher)
 
     def test_debloat_protected_contains_critical_packages(self):
         protected = set(PROFILE["debloat"]["protected"])
@@ -186,6 +215,16 @@ class MergeCfgTests(unittest.TestCase):
         merged = inst.merge_cfg(existing, overlay)
         self.assertIn('content_show_history = "false"', merged)
         self.assertIn('notification_show_autoconfig = "false"', merged)
+
+    def test_replaces_an_old_audio_driver_without_touching_input(self):
+        existing = (
+            'audio_driver = "rsound"\n'
+            'input_player1_a = "5"\n'
+        )
+        overlay = 'audio_driver = "opensl"\ninput_player1_a = "99"\n'
+        merged = inst.merge_cfg(existing, overlay)
+        self.assertIn('audio_driver = "opensl"', merged)
+        self.assertIn('input_player1_a = "5"', merged)
 
     def test_seeds_ps202_pad_when_stock_dpad_is_unbound(self):
         existing = (
@@ -239,6 +278,32 @@ class AdbClientTests(unittest.TestCase):
         client = inst.AdbClient("adb", runner=runner)
         self.assertEqual("0123456789ABCDEF", client.get_serialno())
         self.assertIn("get-serialno", runner.args)
+
+    def test_parses_old_android_df_available_column(self):
+        class RecordingRunner(inst.HostRunner):
+            def run(self, args, timeout=120, check=True, binary=False):
+                return inst.CommandResult(
+                    0,
+                    "Filesystem 1K-blocks Used Available Use% Mounted on\n"
+                    "/dev/block 100000 70000 30000 70% /data\n",
+                    "",
+                )
+
+        client = inst.AdbClient("adb", runner=RecordingRunner())
+        self.assertEqual(30000 * 1024, client.free_bytes("/data"))
+
+
+class BundleTests(unittest.TestCase):
+    def test_discovers_an_extracted_bundle(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for relative in (
+                    "manifest.json", "device-profile.json", "vamanos_installer.py",
+                    "payload/apks/emulationstation.apk", "bundle-sha256.json"):
+                target = root / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(b"x")
+            self.assertEqual(root.resolve(), inst.discover_bundle_root(root))
 
 
 class DownloadTests(unittest.TestCase):
@@ -501,6 +566,7 @@ class FactoryTemprootTests(unittest.TestCase):
         installer.frontend_music_files = lambda: {"menu.ogg": Path("/tmp/menu.ogg")}
         installer.core_files = lambda: {"fceumm": Path("/tmp/fceumm.so")}
         installer.payload_file = lambda key: payloads.append(key) or Path("/tmp/" + key)
+        installer.validate_launcher_config = lambda *args: None
 
         installer.validate_install_artifacts("temproot")
 
@@ -519,6 +585,7 @@ class FactoryTemprootTests(unittest.TestCase):
         installer.frontend_music_files = lambda: {"menu.ogg": Path("/tmp/menu.ogg")}
         installer.core_files = lambda: {"fceumm": Path("/tmp/fceumm.so")}
         installer.payload_file = lambda key: Path("/tmp/" + key)
+        installer.validate_launcher_config = lambda *args: None
 
         installer.validate_install_artifacts("skip", require_ppsspp=False)
 
@@ -557,6 +624,12 @@ class FactoryTemprootTests(unittest.TestCase):
         self.assertTrue(args.legacy_temproot)
         args = inst._build_arg_parser().parse_args(["install", "--boot-mode", "temproot"])
         self.assertEqual("temproot", args.boot_mode)
+
+    def test_restore_boot_command_has_its_own_confirmation(self):
+        args = inst._build_arg_parser().parse_args(["restore-boot", "--confirm", "RESTORE-1234"])
+        self.assertEqual("restore_boot", args.func)
+        self.assertEqual("RESTORE-1234", args.confirm)
+        self.assertEqual("RESTORE-89ABCDEF", inst.Confirmation.token("RESTORE", "0123456789ABCDEF"))
 
 
 class CpuReportTests(unittest.TestCase):

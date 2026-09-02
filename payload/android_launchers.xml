@@ -1,79 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Device override for the currently installed RetroArch 1.20.0 package.
-     The installed ES APK supports this file at
-     /storage/sdcard1/ps202/configs/android_launchers.xml. -->
+<!-- Complete PS202 launcher map. Core files are installed in RetroArch's
+     private /data/data/com.retroarch.ra32/cores directory. -->
 <launchers>
-    <launcher system="nes" package="com.retroarch.ra32" activity="com.retroarch.browser.retroactivity.RetroActivityFuture">
-        <extra name="ROM" value="%ROM_RAW%" />
-        <extra name="LIBRETRO" value="fceumm_libretro_android.so" />
-        <extra name="CONFIGFILE" value="/storage/sdcard0/Android/data/com.retroarch.ra32/files/retroarch.cfg" />
-        <extra name="IME" value="" />
-        <extra name="DATADIR" value="/data/data/com.retroarch.ra32" />
-        <extra name="APK" value="" />
-        <extra name="SDCARD" value="/storage/sdcard0" />
-        <extra name="EXTERNAL" value="/storage/sdcard0/Android/data/com.retroarch.ra32/files" />
-    </launcher>
-    <launcher system="snes" package="com.retroarch.ra32" activity="com.retroarch.browser.retroactivity.RetroActivityFuture">
-        <extra name="ROM" value="%ROM_RAW%" />
-        <extra name="LIBRETRO" value="snes9x_libretro_android.so" />
-        <extra name="CONFIGFILE" value="/storage/sdcard0/Android/data/com.retroarch.ra32/files/retroarch.cfg" />
-        <extra name="IME" value="" />
-        <extra name="DATADIR" value="/data/data/com.retroarch.ra32" />
-        <extra name="APK" value="" />
-        <extra name="SDCARD" value="/storage/sdcard0" />
-        <extra name="EXTERNAL" value="/storage/sdcard0/Android/data/com.retroarch.ra32/files" />
-    </launcher>
-    <launcher system="genesis" package="com.retroarch.ra32" activity="com.retroarch.browser.retroactivity.RetroActivityFuture">
-        <extra name="ROM" value="%ROM_RAW%" />
-        <extra name="LIBRETRO" value="picodrive_libretro_android.so" />
-        <extra name="CONFIGFILE" value="/storage/sdcard0/Android/data/com.retroarch.ra32/files/retroarch.cfg" />
-        <extra name="IME" value="" />
-        <extra name="DATADIR" value="/data/data/com.retroarch.ra32" />
-        <extra name="APK" value="" />
-        <extra name="SDCARD" value="/storage/sdcard0" />
-        <extra name="EXTERNAL" value="/storage/sdcard0/Android/data/com.retroarch.ra32/files" />
-    </launcher>
-    <launcher system="gb" package="com.retroarch.ra32" activity="com.retroarch.browser.retroactivity.RetroActivityFuture">
-        <extra name="ROM" value="%ROM_RAW%" />
-        <extra name="LIBRETRO" value="tgbdual_libretro_android.so" />
-        <extra name="CONFIGFILE" value="/storage/sdcard0/Android/data/com.retroarch.ra32/files/retroarch.cfg" />
-        <extra name="IME" value="" />
-        <extra name="DATADIR" value="/data/data/com.retroarch.ra32" />
-        <extra name="APK" value="" />
-        <extra name="SDCARD" value="/storage/sdcard0" />
-        <extra name="EXTERNAL" value="/storage/sdcard0/Android/data/com.retroarch.ra32/files" />
-    </launcher>
-    <launcher system="gbc" package="com.retroarch.ra32" activity="com.retroarch.browser.retroactivity.RetroActivityFuture">
-        <extra name="ROM" value="%ROM_RAW%" />
-        <extra name="LIBRETRO" value="tgbdual_libretro_android.so" />
-        <extra name="CONFIGFILE" value="/storage/sdcard0/Android/data/com.retroarch.ra32/files/retroarch.cfg" />
-        <extra name="IME" value="" />
-        <extra name="DATADIR" value="/data/data/com.retroarch.ra32" />
-        <extra name="APK" value="" />
-        <extra name="SDCARD" value="/storage/sdcard0" />
-        <extra name="EXTERNAL" value="/storage/sdcard0/Android/data/com.retroarch.ra32/files" />
-    </launcher>
-    <launcher system="gba" package="com.retroarch.ra32" activity="com.retroarch.browser.retroactivity.RetroActivityFuture">
-        <extra name="ROM" value="%ROM_RAW%" />
-        <extra name="LIBRETRO" value="gpsp_libretro_android.so" />
-        <extra name="CONFIGFILE" value="/storage/sdcard0/Android/data/com.retroarch.ra32/files/retroarch.cfg" />
-        <extra name="IME" value="" />
-        <extra name="DATADIR" value="/data/data/com.retroarch.ra32" />
-        <extra name="APK" value="" />
-        <extra name="SDCARD" value="/storage/sdcard0" />
-        <extra name="EXTERNAL" value="/storage/sdcard0/Android/data/com.retroarch.ra32/files" />
-    </launcher>
-    <launcher system="psx" package="com.retroarch.ra32" activity="com.retroarch.browser.retroactivity.RetroActivityFuture">
-        <extra name="ROM" value="%ROM_RAW%" />
-        <extra name="LIBRETRO" value="pcsx_rearmed_libretro_android.so" />
-        <extra name="CONFIGFILE" value="/storage/sdcard0/Android/data/com.retroarch.ra32/files/retroarch.cfg" />
-        <extra name="IME" value="" />
-        <extra name="DATADIR" value="/data/data/com.retroarch.ra32" />
-        <extra name="APK" value="" />
-        <extra name="SDCARD" value="/storage/sdcard0" />
-        <extra name="EXTERNAL" value="/storage/sdcard0/Android/data/com.retroarch.ra32/files" />
-    </launcher>
-    <launcher system="psp" package="org.ppsspp.ppsspp" activity="org.ppsspp.ppsspp.PpssppActivity" action="android.intent.action.VIEW" type="application/octet-stream">
-        <extra name="org.ppsspp.ppsspp.Shortcuts" value="%ROM_RAW%" />
-    </launcher>
+    <launcher system="colecovision" package="com.retroarch.ra32" activity="com.retroarch.browser.retroactivity.RetroActivityFuture" core="gearcoleco_libretro_android.so" />
+    <launcher system="cps1" package="com.retroarch.ra32" activity="com.retroarch.browser.retroactivity.RetroActivityFuture" core="fbneo_libretro_android.so" />
+    <launcher system="cps2" package="com.retroarch.ra32" activity="com.retroarch.browser.retroactivity.RetroActivityFuture" core="fbneo_libretro_android.so" />
+    <launcher system="cps3" package="com.retroarch.ra32" activity="com.retroarch.browser.retroactivity.RetroActivityFuture" core="fbneo_libretro_android.so" />
+    <launcher system="sms" package="com.retroarch.ra32" activity="com.retroarch.browser.retroactivity.RetroActivityFuture" core="smsplus_libretro_android.so" />
+    <launcher system="arcade" package="com.retroarch.ra32" activity="com.retroarch.browser.retroactivity.RetroActivityFuture" core="fbneo_libretro_android.so" />
+    <launcher system="atari2600" package="com.retroarch.ra32" activity="com.retroarch.browser.retroactivity.RetroActivityFuture" core="stella2014_libretro_android.so" />
+    <launcher system="atarilynx" package="com.retroarch.ra32" activity="com.retroarch.browser.retroactivity.RetroActivityFuture" core="handy_libretro_android.so" />
+    <launcher system="gamegear" package="com.retroarch.ra32" activity="com.retroarch.browser.retroactivity.RetroActivityFuture" core="smsplus_libretro_android.so" />
+    <launcher system="gb" package="com.retroarch.ra32" activity="com.retroarch.browser.retroactivity.RetroActivityFuture" core="tgbdual_libretro_android.so" />
+    <launcher system="gba" package="com.retroarch.ra32" activity="com.retroarch.browser.retroactivity.RetroActivityFuture" core="gpsp_libretro_android.so" />
+    <launcher system="gbc" package="com.retroarch.ra32" activity="com.retroarch.browser.retroactivity.RetroActivityFuture" core="tgbdual_libretro_android.so" />
+    <launcher system="genesis" package="com.retroarch.ra32" activity="com.retroarch.browser.retroactivity.RetroActivityFuture" core="picodrive_libretro_android.so" />
+    <launcher system="megadrive" package="com.retroarch.ra32" activity="com.retroarch.browser.retroactivity.RetroActivityFuture" core="picodrive_libretro_android.so" />
+    <launcher system="mame" package="com.retroarch.ra32" activity="com.retroarch.browser.retroactivity.RetroActivityFuture" core="fbneo_libretro_android.so" />
+    <launcher system="ngpc" package="com.retroarch.ra32" activity="com.retroarch.browser.retroactivity.RetroActivityFuture" core="mednafen_ngp_libretro_android.so" />
+    <launcher system="nes" package="com.retroarch.ra32" activity="com.retroarch.browser.retroactivity.RetroActivityFuture" core="fceumm_libretro_android.so" />
+    <launcher system="pcengine" package="com.retroarch.ra32" activity="com.retroarch.browser.retroactivity.RetroActivityFuture" core="mednafen_pce_fast_libretro_android.so" />
+    <launcher system="psp" package="org.ppsspp.ppsspp" activity="org.ppsspp.ppsspp.PpssppActivity" action="android.intent.action.VIEW" type="application/octet-stream" />
+    <launcher system="psx" package="com.retroarch.ra32" activity="com.retroarch.browser.retroactivity.RetroActivityFuture" core="pcsx_rearmed_libretro_android.so" />
+    <launcher system="snes" package="com.retroarch.ra32" activity="com.retroarch.browser.retroactivity.RetroActivityFuture" core="snes9x_libretro_android.so" />
+    <launcher system="wonder" package="com.retroarch.ra32" activity="com.retroarch.browser.retroactivity.RetroActivityFuture" core="mednafen_wswan_libretro_android.so" />
 </launchers>

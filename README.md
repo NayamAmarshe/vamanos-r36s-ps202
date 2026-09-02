@@ -8,120 +8,146 @@ Made by **Nayam Amarshe**.
   <source src="video.mp4" type="video/mp4">
 </video>
 
-vamanOS is a simple firmware update for R36S PS202 handhelds. These devices
-are unofficial clones of the original R36S. They come with Android 4.4,
-Wi-Fi, and Bluetooth, but their factory software is limited and leaves very
-little room for improvements.
-
-That is why vamanOS was made. It gives the handheld a clean game menu, opens
-games with RetroArch or PPSSPP, and makes the Android 4.4 handheld much nicer
-to use. It also includes the handheld’s menu music. Your games, saves, and
-controller settings stay in place.
-
-## Which device is this for?
+vamanOS is a simple firmware update for the R36S PS202 devices. These are
+unofficial R36S clones with Android 4.4, Wi-Fi, and Bluetooth. Their factory
+software is limited, so vamanOS gives them a clean game menu, better game
+launching, RetroArch, PPSSPP, a CODY theme, performance settings, and the
+original handheld menu music.
 
 This installer is for the **R36S PS202**, also called **PS202** or **TICHIPS**.
-The supported device should have:
+If this looks like your device, you’re good to go:
 
 - Model: `PS202`
 - Build: `PS202_00001`
 - Android: `4.4.2`
 - Processor: MediaTek `MT6572`
 - Screen: landscape `640 × 480`
-- Built-in wireless: Wi-Fi and Bluetooth
+- Wireless: Wi-Fi and Bluetooth
 
-The installer checks the device before it starts. It is not for other R36S
-models or other handhelds. If this looks like your device, you’re good to go!
+The installer checks the device before it starts. Do not use it on another
+handheld.
 
 ## Before you start
 
-1. Make a copy of your games, saves, and save states.
-2. Read [ADB and USB debugging setup](ADB-SETUP.md).
-3. Download the vamanOS ZIP from the project's GitHub Releases page.
-4. Unzip it into a folder.
-5. Connect the handheld with a USB data cable. Keep it connected during the
-   install.
-6. Keep the computer online. The installer downloads the tested RetroArch
-   version during the install.
+1. Copy your games, saves, and save states somewhere safe.
+2. Install **Python 3** from [python.org](https://www.python.org/downloads/).
+3. Follow [ADB and USB debugging setup](ADB-SETUP.md).
+4. Download the vamanOS ZIP from GitHub Releases and unzip it.
+5. Connect the handheld with a USB data cable.
+6. Keep the computer online so the installer can download the tested
+   RetroArch version.
 
-The installer is only for the R36S PS202. Do not use it on another handheld.
-
-## Install vamanOS
+## Install
 
 Open a terminal or command window inside the unzipped vamanOS folder.
 
 ### macOS or Linux
 
-Run:
-
 ```bash
 ./install.sh doctor
-./install.sh install --boot-mode temproot
+./install.sh install
 ./install.sh verify
 ```
 
 ### Windows PowerShell
 
-Run:
-
 ```powershell
 .\install.ps1 doctor
-.\install.ps1 install --boot-mode temproot
+.\install.ps1 install
 .\install.ps1 verify
 ```
 
 ### Windows Command Prompt
 
-Run:
-
 ```bat
 install.cmd doctor
-install.cmd install --boot-mode temproot
+install.cmd install
 install.cmd verify
 ```
 
-The installer will show a code that starts with `INSTALL-`.
+The installer will show a code beginning with `INSTALL-`. Type that exact code
+and press Enter. This is the final yes before installation begins.
 
-Type that exact code and press Enter. This is the final “yes” before the
-install starts. If you type anything else, the installer stops.
+Keep the cable connected until the installer says it is finished. The
+handheld reboots at the end to start vamanOS correctly.
 
-The install can take a few minutes. Do not unplug the handheld until it says
-the install is finished.
+## Put games on the SD card
 
-## What you get
+Put games in the matching folder on the SD card:
 
-vamanOS adds:
+| System | Folder |
+| --- | --- |
+| NES | `roms/nes` |
+| SNES | `roms/snes` |
+| Genesis / Mega Drive | `roms/genesis` or `roms/megadrive` |
+| Game Boy / Color / Advance | `roms/gb`, `roms/gbc`, or `roms/gba` |
+| PlayStation | `roms/psx` |
+| PSP | `roms/psp` |
+| Arcade / CPS1 / CPS2 / CPS3 / MAME | `roms/arcade`, `roms/CPS1`, `roms/CPS2`, `roms/CPS3`, or `roms/mame` |
+| Master System / Game Gear | `roms/SMS` or `roms/gamegear` |
+| Atari 2600 / Lynx | `roms/atari2600` or `roms/atarilynx` |
+| Neo Geo Pocket | `roms/ngpc` |
+| PC Engine | `roms/pcengine` |
+| ColecoVision | `roms/COLECOVISION` |
+| WonderSwan | `roms/wonder` |
 
-- A game menu
-- RetroArch 1.20.0 and the PS202's PPSSPP app
-- Game cores and the CODY theme
-- Root ADB and the small tools vamanOS needs
-- Faster startup and game loading
+The full path is `/storage/sdcard1/roms/...`. BIOS files go in
+`/storage/sdcard1/ps202/bios`.
 
-The installer keeps the PPSSPP app already on the handheld. It installs the
-bundled PPSSPP only when PPSSPP is missing.
+## What vamanOS keeps
 
-Your games, saves, screenshots, and controller settings are kept.
+The installer keeps your ROMs, saves, screenshots, controller map, and
+RetroArch settings. It keeps the factory emulator because it is useful for
+the handheld’s layout. It keeps an existing PPSSPP app and only installs the
+included PPSSPP when PPSSPP is missing.
 
-## If the installer stops
+Old launchers and unused apps are backed up to
+`/storage/sdcard1/ps202/backups/apps` before they are removed. PS202 Shell is
+not installed. They are removed at the end, after the new game menu is ready,
+so the handheld is never left without a HOME app.
 
-Read the message on the screen first. Then run:
+RetroArch 1.20.0 is downloaded from its pinned official build during setup.
+
+## If something goes wrong
+
+Run the read-only check again:
 
 ```bash
 ./install.sh doctor
 ```
 
-On Windows, use `install.ps1 doctor` or `install.cmd doctor` instead.
+If the handheld still boots into Android but you want the original boot image
+back:
 
-If the handheld is stuck on its startup screen, run:
+macOS or Linux:
+
+```bash
+./install.sh restore-boot
+```
+
+Windows PowerShell:
+
+```powershell
+.\install.ps1 restore-boot
+```
+
+Windows Command Prompt:
+
+```bat
+install.cmd restore-boot
+```
+
+This asks for a separate `RESTORE-...` confirmation code. Stock boot removes
+root ADB, as expected.
+
+If the handheld is stuck during startup, run this on macOS or Linux:
 
 ```bash
 ./recover-bootloop.sh doctor
 ```
 
-Do not unplug the handheld while the installer is working.
+Do not unplug the handheld while an installer or restore command is running.
 
-## Need help?
+For connection problems, see [ADB and USB debugging setup](ADB-SETUP.md).
 
-See [ADB and USB debugging setup](ADB-SETUP.md) if the computer cannot see the
-handheld.
+See [CREDITS.md](CREDITS.md) for included software and music information.

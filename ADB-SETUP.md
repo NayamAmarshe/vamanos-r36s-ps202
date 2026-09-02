@@ -4,6 +4,10 @@ This guide helps your computer talk to the PS202 handheld.
 
 You need a small program called **ADB**. You do not need Android Studio.
 
+The installer also needs **Python 3**. Download it from
+[python.org](https://www.python.org/downloads/) and accept the normal install
+options. Windows users should select **Add Python to PATH** when it is shown.
+
 ## 1. Download ADB
 
 Download **Android SDK Platform-Tools** from the official Android website:
@@ -71,14 +75,14 @@ If the installer says that ADB cannot be found, tell it where ADB is:
 
 ```bash
 ./install.sh --adb /path/to/platform-tools/adb doctor
-./install.sh --adb /path/to/platform-tools/adb install --boot-mode temproot
+./install.sh --adb /path/to/platform-tools/adb install
 ```
 
 ### Windows PowerShell
 
 ```powershell
 .\install.ps1 --adb C:\path\to\platform-tools\adb.exe doctor
-.\install.ps1 --adb C:\path\to\platform-tools\adb.exe install --boot-mode temproot
+.\install.ps1 --adb C:\path\to\platform-tools\adb.exe install
 ```
 
 ## If no device appears

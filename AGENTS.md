@@ -27,6 +27,8 @@ mean “install now.” Install only when the user clearly asks for it.
    to the user and ask for a final yes. After the user agrees, enter that exact
    code. Never invent a code or skip this confirmation.
 7. Keep the USB cable connected until the installer finishes.
+   The installer reboots once at the end and waits for Android and
+   EmulationStation to become ready. Do not interrupt that reboot.
 8. Check the result:
 
    ```sh
@@ -35,6 +37,10 @@ mean “install now.” Install only when the user clearly asks for it.
 
 On Windows, use `install.ps1` in PowerShell or `install.cmd` in Command Prompt
 for the same steps.
+
+To return to the exact stock PS202 boot image while Android and root ADB still
+work, run `./install.sh restore-boot` (or the matching Windows wrapper). It
+requires a separate `RESTORE-...` confirmation and removes root ADB by design.
 
 ## Important rules
 

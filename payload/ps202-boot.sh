@@ -38,8 +38,10 @@ if [ -d /storage/sdcard1/retroarch/cores ]; then
     echo 'rgui_browser_directory = "/storage/sdcard1/roms/"'
     echo 'menu_driver = "ozone"'
     echo 'video_threaded = "true"'
-    echo 'audio_driver = "android"'
+    echo 'audio_driver = "opensl"'
     echo 'input_driver = "android"'
+    echo 'input_volume_up = "volumeup"'
+    echo 'input_volume_down = "volumedown"'
     echo 'input_autoconfigure_dir = "/storage/sdcard1/retroarch/autoconfig/"'
     echo 'content_show_history = "false"'
     echo 'video_vsync = "true"'
@@ -56,12 +58,42 @@ if [ -d /storage/sdcard1/retroarch/cores ]; then
   } > "$CFG"
   chmod 664 "$CFG"
   fi
+  # The stock/shared config may already contain an unusable audio backend
+  # such as rsound. Android 4.4's toolbox has no sed, awk, or printf, so use
+  # only the shell's portable read/case/echo operations for this one setting.
+  if [ -f "$CFG" ] && ! grep -q '^audio_driver = "opensl"$' "$CFG" 2>/dev/null; then
+    CFG_TMP="${CFG}.vamanos.tmp"
+    if : > "$CFG_TMP"; then
+      copy_ok=1
+      while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+          audio_driver\ =\ *) line='audio_driver = "opensl"' ;;
+        esac
+        if ! echo "$line" >> "$CFG_TMP"; then
+          copy_ok=0
+          break
+        fi
+      done < "$CFG"
+      if [ "$copy_ok" = 1 ] && cp -f "$CFG_TMP" "$CFG"; then
+        rm -f "$CFG_TMP"
+        echo "audio driver set to opensl" >> "$LOG"
+      else
+        echo "WARNING: could not set audio driver to opensl" >> "$LOG"
+        rm -f "$CFG_TMP"
+      fi
+    else
+      echo "WARNING: could not create RetroArch config temp file" >> "$LOG"
+    fi
+  fi
   mkdir -p /data/local/ra-snapshot
   # Merge only tuning keys when the config already exists; never rewrite
   # personal input mappings or the user's other RetroArch settings.
   if [ -f "$CFG" ]; then
     for kv in \
+      'audio_driver = "opensl"' \
       'audio_latency = "96"' \
+      'input_volume_up = "volumeup"' \
+      'input_volume_down = "volumedown"' \
       'pcsx_rearmed_dynarec = "enabled"' \
       'pcsx_rearmed_neon = "enabled"' \
       'pcsx_rearmed_frameskip = "0"' \
@@ -79,30 +111,43 @@ if [ -d /storage/sdcard1/retroarch/cores ]; then
   echo "retroarch cores: SD source preserved; private runtime copy is installer-managed" >> "$LOG"
 fi
 
-# --- PPSSPP conservative tuning (best-effort; both memstick paths) ---
+# --- PPSSPP conservative tuning (first-run defaults; preserve user settings) ---
 mkdir -p /storage/sdcard1/PSP/SAVEDATA /storage/sdcard1/PSP/PPSSPP/STATE
-{
-  echo '[Graphics]'
-  echo 'RenderResolution = 1'
-  echo 'BufferedRendering = True'
-  echo 'HardwareTransform = True'
-  echo 'SoftwareSkinning = False'
-  echo 'LazyTextureCaching = True'
-  echo 'Frameskip = 0'
-  echo 'SplineBezierQuality = 0'
-  echo 'VSyncInterval = 1'
-} > /storage/sdcard1/PSP/ppsspp.ini 2>> "$LOG"
+if [ ! -f /storage/sdcard1/PSP/ppsspp.ini ]; then
+  {
+    echo '[Graphics]'
+    echo 'RenderResolution = 1'
+    echo 'BufferedRendering = True'
+    echo 'HardwareTransform = True'
+    echo 'SoftwareSkinning = False'
+    echo 'LazyTextureCaching = True'
+    echo 'Frameskip = 0'
+    echo 'SplineBezierQuality = 0'
+    echo 'VSyncInterval = 1'
+  } > /storage/sdcard1/PSP/ppsspp.ini 2>> "$LOG"
+  echo "ppsspp defaults written" >> "$LOG"
+else
+  echo "ppsspp.ini exists — preserving user settings" >> "$LOG"
+fi
 if [ -d /data/data/org.ppsspp.ppsspp ]; then
   mkdir -p /data/data/org.ppsspp.ppsspp/files/PSP/SAVEDATA /data/data/org.ppsspp.ppsspp/files/PSP/PPSSPP/STATE
-  cp -f /storage/sdcard1/PSP/ppsspp.ini /data/data/org.ppsspp.ppsspp/files/PSP/ppsspp.ini 2>> "$LOG"
+  if [ ! -f /data/data/org.ppsspp.ppsspp/files/PSP/ppsspp.ini ] \
+      && [ -f /storage/sdcard1/PSP/ppsspp.ini ]; then
+    cp -f /storage/sdcard1/PSP/ppsspp.ini /data/data/org.ppsspp.ppsspp/files/PSP/ppsspp.ini 2>> "$LOG"
+    echo "ppsspp private defaults copied" >> "$LOG"
+  else
+    echo "ppsspp private settings preserved" >> "$LOG"
+  fi
 fi
-echo "ppsspp tuning written" >> "$LOG"
+echo "ppsspp setup complete" >> "$LOG"
 
 # --- microSD ps202 layout (idempotent; never delete user files) ---
 if [ -d /storage/sdcard1 ]; then
   for d in \
-    ps202/bios ps202/roms/nes ps202/roms/snes ps202/roms/genesis \
-    ps202/roms/gb ps202/roms/gbc ps202/roms/gba ps202/roms/psx ps202/roms/psp \
+    ps202/bios roms/COLECOVISION roms/CPS1 roms/CPS2 roms/CPS3 roms/SMS \
+    roms/arcade roms/atari2600 roms/atarilynx roms/gamegear roms/gb \
+    roms/gba roms/gbc roms/genesis roms/megadrive roms/mame roms/ngpc \
+    roms/nes roms/pcengine roms/psp roms/psx roms/snes roms/wonder \
     ps202/saves ps202/states ps202/screenshots ps202/themes \
     ps202/media/images ps202/media/videos ps202/configs ps202/logs \
     ps202/cache ps202/cache/roms; do

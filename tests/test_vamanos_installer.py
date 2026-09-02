@@ -29,6 +29,21 @@ class ManifestProfileTests(unittest.TestCase):
         self.assertIn(b"resumeAfterSuspend", dex)
         self.assertIn(b"splash wallpaper repaired", dex)
 
+    def test_retroarch_is_the_pinned_api19_build(self):
+        artifact = MANIFEST["artifacts"]["retroarch"]
+        self.assertEqual("release-inputs/apks/retroarch.apk", artifact["source"])
+        self.assertEqual("com.retroarch.ra32", artifact["package"])
+        self.assertEqual("1.20.0_GIT", artifact["version_name"])
+        self.assertEqual(11, artifact["version_code"])
+        apk = (INSTALLER / artifact["source"]).resolve()
+        if not apk.is_file():
+            self.skipTest("packaged RetroArch APK not present")
+        self.assertEqual(artifact["sha256"], inst.sha256_file(apk))
+        with zipfile.ZipFile(apk) as archive:
+            manifest = archive.read("AndroidManifest.xml")
+        self.assertIn("com.retroarch.ra32".encode("utf-16le"), manifest)
+        self.assertIn("1.20.0_GIT".encode("utf-16le"), manifest)
+
     def test_profile_is_ps202_00001(self):
         self.assertEqual("PS202_00001", PROFILE["id"])
         self.assertEqual("armeabi-v7a", PROFILE["identity"]["abi"])

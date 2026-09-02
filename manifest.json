@@ -17,8 +17,10 @@
       "sha256": "f9aefe9d2b941e50b3f210f14271f072bf6b1aec8df3e03c06dcb101090087c5"
     },
     "retroarch": {
-      "source": "../../tools/retroarch-ra32-120.apk",
+      "source": "release-inputs/apks/retroarch.apk",
       "package": "com.retroarch.ra32",
+      "version_name": "1.20.0_GIT",
+      "version_code": 11,
       "sha256": "cbcf1cf1aac3e9afe447051cae12ee069039dbc22132d92af856cab26cae45df"
     },
     "ppsspp": {

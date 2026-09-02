@@ -12,6 +12,9 @@ PPSSPP and uses this bundled copy only as a fallback when PPSSPP is missing.
 
 - `apks/emulationstation.apk` — the packaged Batocera V2 EmulationStation
   frontend used by vamanOS.
+- `apks/retroarch.apk` — the tested `com.retroarch.ra32` RetroArch
+  `1.20.0_GIT` APK for Android 4.4.2/API 19 (version code 11). The installer
+  uses this exact pinned copy; it does not download a changing version online.
 - `bin/su` — the live `/system/xbin/su` fetched from the reference device
   (SHA-256 `48bdf38d…`). Used for step 3 of the install.
 - `apks/ppsspp.apk` — a fallback `org.ppsspp.ppsspp` APK (from the reference

@@ -17,6 +17,34 @@ MANIFEST = inst.load_json(INSTALLER / "manifest.json")
 PROFILE = inst.load_json(INSTALLER / "device-profile.json")
 
 
+class BannerTests(unittest.TestCase):
+    def test_banner_is_ascii_and_names_vamanos(self):
+        self.assertTrue(all(ord(char) < 128 for char in inst.VAMANOS_BANNER))
+        with patch("builtins.print") as output:
+            inst.print_banner()
+        rendered = "\n".join(str(call.args[0]) if call.args else ""
+                                for call in output.call_args_list)
+        self.assertIn("vamanOS", rendered)
+
+
+class HomeTests(unittest.TestCase):
+    def test_uses_kitkat_home_intent(self):
+        commands = []
+
+        class FakeAdb:
+            def shell(self, command, timeout=300, check=True):
+                commands.append(command)
+                return inst.CommandResult(
+                    0, "Starting: Intent { cat=[android.intent.category.HOME] }\n"
+                       "Activity: com.ps202.emulationstation/.PS202HomeActivity\n", "")
+
+        installer = inst.VamanOSInstaller.__new__(inst.VamanOSInstaller)
+        installer.adb = FakeAdb()
+        installer.set_home()
+        self.assertEqual([inst.HOME_INTENT], commands)
+        self.assertNotIn("set-home-activity", commands[0])
+
+
 class ManifestProfileTests(unittest.TestCase):
     def test_emulationstation_artifact_is_the_suspend_fix_build(self):
         apk = (INSTALLER / MANIFEST["artifacts"]["emulationstation"]["source"]).resolve()
@@ -292,6 +320,19 @@ class AdbClientTests(unittest.TestCase):
         client = inst.AdbClient("adb", runner=RecordingRunner())
         self.assertEqual(30000 * 1024, client.free_bytes("/data"))
 
+    def test_parses_ps202_human_readable_df_free_column(self):
+        class RecordingRunner(inst.HostRunner):
+            def run(self, args, timeout=120, check=True, binary=False):
+                return inst.CommandResult(
+                    0,
+                    "Filesystem               Size     Used     Free   Blksize\n"
+                    "/data                    1.4G     1.4G    83.8M   4096\n",
+                    "",
+                )
+
+        client = inst.AdbClient("adb", runner=RecordingRunner())
+        self.assertEqual(int(83.8 * 1024 * 1024), client.free_bytes("/data"))
+
 
 class BundleTests(unittest.TestCase):
     def test_discovers_an_extracted_bundle(self):
@@ -362,6 +403,7 @@ class AppInstallTests(unittest.TestCase):
         installer.adb = FakeAdb()
         installer.msg = lambda *args, **kwargs: None
         installer.art = lambda key: Path(directory) / f"{key}.apk"
+        installer.installed_package_matches = lambda key: False
         for key in ("emulationstation", "retroarch", "ppsspp"):
             (Path(directory) / f"{key}.apk").write_bytes(b"apk")
         return installer, installed
@@ -377,6 +419,13 @@ class AppInstallTests(unittest.TestCase):
             installer, installed = self._installer(directory, ppsspp_present=False)
             installer.install_apks()
         self.assertEqual(["emulationstation.apk", "retroarch.apk", "ppsspp.apk"], installed)
+
+    def test_skips_exact_existing_es_and_retroarch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            installer, installed = self._installer(directory, ppsspp_present=True)
+            installer.installed_package_matches = lambda key: key in {"emulationstation", "retroarch"}
+            installer.install_apks()
+        self.assertEqual([], installed)
 
 
 class CoreInstallTests(unittest.TestCase):
@@ -410,12 +459,13 @@ class FrontendMusicTests(unittest.TestCase):
     def test_installs_missing_tracks_and_keeps_existing_tracks(self):
         pushes = []
         commands = []
+        states = iter(("missing", "installed"))
 
         class FakeAdb:
             def shell_text(self, command, timeout=120, check=True):
                 commands.append(command)
                 if command.startswith("if test -f"):
-                    return "installed"
+                    return next(states)
                 return "done"
 
             def push(self, local, remote, timeout=600):
@@ -435,8 +485,36 @@ class FrontendMusicTests(unittest.TestCase):
             installer.msg = lambda *args, **kwargs: None
             installer.install_frontend_music()
 
-        self.assertEqual([(source, "/data/local/tmp/vamanos-music-0.ogg")], pushes)
+        self.assertEqual([(source, "/storage/sdcard1/music/menu.ogg")], pushes)
         self.assertIn("/storage/sdcard1/music/menu.ogg", commands[1])
+
+    def test_keeps_existing_track_without_temp_copy_cleanup(self):
+        pushes = []
+
+        class FakeAdb:
+            def shell_text(self, command, timeout=120, check=True):
+                if command.startswith("if test -f"):
+                    return "existing"
+                return "done"
+
+            def push(self, local, remote, timeout=600):
+                pushes.append((Path(local), remote))
+
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "menu.ogg"
+            source.write_bytes(b"music")
+            installer = inst.VamanOSInstaller.__new__(inst.VamanOSInstaller)
+            installer.manifest = {"artifacts": {"frontend_music": {
+                "device_path": "/storage/sdcard1/music",
+                "files": {"menu.ogg": inst.sha256_file(source)},
+            }}}
+            installer.frontend_music_files = lambda: {"menu.ogg": source}
+            installer.adb = FakeAdb()
+            installer.dry_run = False
+            installer.msg = lambda *args, **kwargs: None
+            installer.install_frontend_music()
+
+        self.assertEqual([], pushes)
 
 
 class AndroidBootSplashTests(unittest.TestCase):

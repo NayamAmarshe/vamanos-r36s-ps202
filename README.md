@@ -112,7 +112,9 @@ Old launchers and unused apps are backed up to
 not installed. They are removed at the end, after the new game menu is ready,
 so the handheld is never left without a HOME app.
 
-RetroArch 1.20.0 is downloaded from its pinned official build during setup.
+RetroArch 1.20.0 is downloaded from its pinned official build during setup
+and installed on the SD card, because the handheld’s phone storage is small.
+Its settings and saves are kept.
 
 ## If something goes wrong
 

@@ -71,6 +71,12 @@ and press Enter. This is the final yes before installation begins.
 Keep the cable connected until the installer says it is finished. The
 handheld reboots at the end to start vamanOS correctly.
 
+On a factory device, the installer reads the boot image already on that
+handheld and saves it to the SD card first. It knows the V10 boot image and
+the identical V11/V12 boot image. When one matches exactly, it uses the
+matching bundled patched image. If a supported PS202 has another boot image,
+the installer patches that image itself so its kernel stays unchanged.
+
 ## Put games on the SD card
 
 Put games in the matching folder on the SD card:
@@ -117,7 +123,7 @@ Run the read-only check again:
 ```
 
 If the handheld still boots into Android but you want the original boot image
-back:
+back, use the backup saved on its SD card:
 
 macOS or Linux:
 
@@ -137,8 +143,8 @@ Windows Command Prompt:
 install.cmd restore-boot
 ```
 
-This asks for a separate `RESTORE-...` confirmation code. Stock boot removes
-root ADB, as expected.
+This asks for a separate `RESTORE-...` confirmation code. Restoring the saved
+image removes root ADB, as expected.
 
 If the handheld is stuck during startup, run this on macOS or Linux:
 

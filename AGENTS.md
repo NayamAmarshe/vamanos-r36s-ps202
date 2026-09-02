@@ -38,9 +38,13 @@ mean “install now.” Install only when the user clearly asks for it.
 On Windows, use `install.ps1` in PowerShell or `install.cmd` in Command Prompt
 for the same steps.
 
-To return to the exact stock PS202 boot image while Android and root ADB still
-work, run `./install.sh restore-boot` (or the matching Windows wrapper). It
-requires a separate `RESTORE-...` confirmation and removes root ADB by design.
+On the first install, the installer captures the boot region from the connected
+handheld and saves it to the SD card. For exact V10 and V11/V12 boot checksums,
+it uses the matching bundled patched pair. For another supported PS202 image,
+it patches that image's own ramdisk. To restore the captured image while
+Android and root ADB still work, run
+`./install.sh restore-boot` (or the matching Windows wrapper). It requires a
+separate `RESTORE-...` confirmation and removes root ADB by design.
 
 ## Important rules
 
@@ -66,7 +70,10 @@ requires a separate `RESTORE-...` confirmation and removes root ADB by design.
 - `payload/` contains the installer files that are safe to ship.
 - `tests/` contains host tests.
 - `release-inputs/` contains the public runtime files used to build a release
-  ZIP. Keep its APKs, cores, theme, and helper binaries in the repository.
+  ZIP. Keep its APKs, cores, theme, helper binaries, and the exact V10 and
+  V11/V12 boot pairs in the repository. The installer only uses a boot pair
+  after matching the device's full boot checksum; other supported images use
+  the live patch fallback. A loose pre-patched `adbd` is not a release input.
 - Do not put ROMs, saves, device backups, credentials, or diagnostic captures
   in the repository.
 

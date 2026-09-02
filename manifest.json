@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "product": "vamanOS for R36S PS202",
-  "manifest_version": "1.0.8",
+  "manifest_version": "1.1.0",
   "device_profile": "device-profile.json",
   "payload": {
     "init_script": "payload/ps202-init.sh",
@@ -36,12 +36,8 @@
       "owner": "0:0",
       "sha256": "48bdf38db21c5df508120184dd662240e52ba0803ab659e527873012afc16aee"
     },
-    "patched_adbd": {
-      "source": "../../ps202-project/binaries/patched-adbd/adbd",
-      "sha256": "a4eaf7436f9140ec5c5b18f96d570e5b2ef80f62567f873e4987d159e80ac740"
-    },
     "find": {
-      "source": "../../ps202-project/binaries/find/find",
+      "source": "release-inputs/bin/find",
       "on_device": "/system/xbin/find",
       "mode": "0755",
       "owner": "0:0",
@@ -63,12 +59,24 @@
       ],
       "sha256": "0f17354c875aa6a38db1a4a6f7475712810e234a72e6f1450e799585c457aff0"
     },
-    "boot_stock": {
-      "source": "../../ps202-project/backups/boot-images/boot-stock.img",
+    "boot_v10_stock": {
+      "source": "release-inputs/boot/v10_stock.img",
+      "bundle_path": "payload/boot/v10_stock.img",
+      "sha256": "ccd2159d00f492d20ff8a02677bc3ba109b7f2c02a7ef87c19d53604d45480ac"
+    },
+    "boot_v10_patched": {
+      "source": "release-inputs/boot/v10_patched.img",
+      "bundle_path": "payload/boot/v10_patched.img",
+      "sha256": "591e7a8f3e583898ef6c3008ae995647c877e84d2212849a89143146320ec2e5"
+    },
+    "boot_v11_v12_stock": {
+      "source": "release-inputs/boot/v11_v12_stock.img",
+      "bundle_path": "payload/boot/v11_v12_stock.img",
       "sha256": "1bbc46ff83da7c952ca527591a675a8030b1b837963499b1b7b0a9015c42b6ec"
     },
-    "boot_patched": {
-      "source": "../../ps202-project/firmware/boot-adbd-root-v2.img",
+    "boot_v11_v12_patched": {
+      "source": "release-inputs/boot/v11_v12_patched.img",
+      "bundle_path": "payload/boot/v11_v12_patched.img",
       "sha256": "abe727c593688c2193f2767a706173851e69fdd2e66c6ef22da523166d635ed1"
     },
     "android_bootanimation": {
@@ -107,6 +115,18 @@
       }
     }
   },
+  "boot_image_variants": [
+    {
+      "name": "V10",
+      "stock": "boot_v10_stock",
+      "patched": "boot_v10_patched"
+    },
+    {
+      "name": "V11/V12",
+      "stock": "boot_v11_v12_stock",
+      "patched": "boot_v11_v12_patched"
+    }
+  ],
   "cores": {
     "fceumm": "fceumm_libretro_android.so",
     "snes9x": "snes9x_libretro_android.so",

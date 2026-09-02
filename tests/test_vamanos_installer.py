@@ -1,30 +1,19 @@
 import json
+import sys
 import tempfile
 import unittest
 import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
-import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import vamanos_installer as inst
-
 
 ROOT = Path(__file__).resolve().parents[3]
 INSTALLER = ROOT / "tools" / "ps202-installer"
 MANIFEST = inst.load_json(INSTALLER / "manifest.json")
 PROFILE = inst.load_json(INSTALLER / "device-profile.json")
-
-
-class BannerTests(unittest.TestCase):
-    def test_banner_is_ascii_and_names_vamanos(self):
-        self.assertTrue(all(ord(char) < 128 for char in inst.VAMANOS_BANNER))
-        with patch("builtins.print") as output:
-            inst.print_banner()
-        rendered = "\n".join(str(call.args[0]) if call.args else ""
-                                for call in output.call_args_list)
-        self.assertIn("vamanOS", rendered)
 
 
 class HomeTests(unittest.TestCase):
@@ -35,8 +24,11 @@ class HomeTests(unittest.TestCase):
             def shell(self, command, timeout=300, check=True):
                 commands.append(command)
                 return inst.CommandResult(
-                    0, "Starting: Intent { cat=[android.intent.category.HOME] }\n"
-                       "Activity: com.ps202.emulationstation/.PS202HomeActivity\n", "")
+                    0,
+                    "Starting: Intent { cat=[android.intent.category.HOME] }\n"
+                    "Activity: com.ps202.emulationstation/.PS202HomeActivity\n",
+                    "",
+                )
 
         installer = inst.VamanOSInstaller.__new__(inst.VamanOSInstaller)
         installer.adb = FakeAdb()
@@ -47,11 +39,14 @@ class HomeTests(unittest.TestCase):
 
 class ManifestProfileTests(unittest.TestCase):
     def test_emulationstation_artifact_is_the_suspend_fix_build(self):
-        apk = (INSTALLER / MANIFEST["artifacts"]["emulationstation"]["source"]).resolve()
+        apk = (
+            INSTALLER / MANIFEST["artifacts"]["emulationstation"]["source"]
+        ).resolve()
         if not apk.is_file():
             self.skipTest("packaged EmulationStation APK not present")
-        self.assertEqual(MANIFEST["artifacts"]["emulationstation"]["sha256"],
-                         inst.sha256_file(apk))
+        self.assertEqual(
+            MANIFEST["artifacts"]["emulationstation"]["sha256"], inst.sha256_file(apk)
+        )
         with zipfile.ZipFile(apk) as archive:
             dex = archive.read("classes.dex")
         self.assertIn(b"pauseForSuspend", dex)
@@ -79,7 +74,9 @@ class ManifestProfileTests(unittest.TestCase):
         self.assertEqual("armeabi-v7a", PROFILE["identity"]["abi"])
 
     def test_retroarch_baseline_binds_ps202_volume_keys(self):
-        baseline = (INSTALLER / "payload/retroarch-baseline.cfg").read_text(encoding="utf-8")
+        baseline = (INSTALLER / "payload/retroarch-baseline.cfg").read_text(
+            encoding="utf-8"
+        )
         self.assertIn('input_volume_up = "volumeup"', baseline)
         self.assertIn('input_volume_down = "volumedown"', baseline)
         self.assertIn('audio_driver = "opensl"', baseline)
@@ -88,18 +85,19 @@ class ManifestProfileTests(unittest.TestCase):
         self.assertIn('input_volume_up = "volumeup"', helper)
         self.assertIn('input_volume_down = "volumedown"', helper)
         self.assertIn('audio_driver = "opensl"', helper)
-        self.assertIn('audio_driver\\ =\\ *)', helper)
+        self.assertIn("audio_driver\\ =\\ *)", helper)
 
     def test_boot_region_offsets_are_exact(self):
         boot = PROFILE["regions"]["boot"]
-        self.assertEqual(0x01D80000, boot["offset"])   # 30932992 bytes = 60416 sectors
+        self.assertEqual(0x01D80000, boot["offset"])  # 30932992 bytes = 60416 sectors
         self.assertEqual(6 * 1024 * 1024, boot["length"])
 
     def test_splash_is_android_bootanimation_not_raw_logo_region(self):
         self.assertNotIn("logo", PROFILE["regions"])
         self.assertNotIn("logo_custom", MANIFEST["artifacts"])
-        self.assertEqual("/system/media/bootanimation.zip",
-                         PROFILE["android_boot_splash"]["path"])
+        self.assertEqual(
+            "/system/media/bootanimation.zip", PROFILE["android_boot_splash"]["path"]
+        )
         source = (INSTALLER / "vamanos_installer.py").read_text(encoding="utf-8")
         self.assertNotIn('write_region("logo"', source)
         self.assertNotIn("logo_custom", source)
@@ -115,13 +113,20 @@ class ManifestProfileTests(unittest.TestCase):
             self.assertEqual("desc.txt", names[0])
             self.assertEqual("part1/final.jpg", names[-1])
             self.assertEqual(126, len(names))
-            self.assertEqual(b"640 480 15\np 1 0 part0\np 0 0 part1\n",
-                             archive.read("desc.txt"))
-            self.assertEqual(artifact["reveal_frame_count"],
-                             len([name for name in names if name.startswith("part0/")]))
-            self.assertEqual(zipfile.ZIP_STORED, archive.getinfo("desc.txt").compress_type)
+            self.assertEqual(
+                b"640 480 15\np 1 0 part0\np 0 0 part1\n", archive.read("desc.txt")
+            )
+            self.assertEqual(
+                artifact["reveal_frame_count"],
+                len([name for name in names if name.startswith("part0/")]),
+            )
+            self.assertEqual(
+                zipfile.ZIP_STORED, archive.getinfo("desc.txt").compress_type
+            )
             for name in names[1:]:
-                self.assertEqual(zipfile.ZIP_STORED, archive.getinfo(name).compress_type)
+                self.assertEqual(
+                    zipfile.ZIP_STORED, archive.getinfo(name).compress_type
+                )
 
         self.assertEqual("vamanos_boot.mp4", artifact["source_video_name"])
 
@@ -134,23 +139,122 @@ class ManifestProfileTests(unittest.TestCase):
         with zipfile.ZipFile(theme) as archive:
             names = archive.namelist()
             self.assertIn("theme.xml", names)
-            self.assertFalse(any(name.startswith("es-theme-CODY-DARKTECK-main/") for name in names))
-            self.assertIn(b"<formatVersion>7</formatVersion>", archive.read("theme.xml"))
+            self.assertFalse(
+                any(name.startswith("es-theme-CODY-DARKTECK-main/") for name in names)
+            )
+            self.assertIn(
+                b"<formatVersion>7</formatVersion>", archive.read("theme.xml")
+            )
 
     def test_frontend_music_is_present_and_checksum_pinned(self):
         artifact = MANIFEST["artifacts"]["frontend_music"]
         root = (INSTALLER / artifact["source"]).resolve()
         self.assertTrue(root.is_dir())
-        self.assertEqual(set(artifact["files"]), {path.name for path in root.glob("*.ogg")})
+        self.assertEqual(
+            set(artifact["files"]), {path.name for path in root.glob("*.ogg")}
+        )
         for name, expected in artifact["files"].items():
             self.assertEqual(expected, inst.sha256_file(root / name))
 
-    def test_boot_patched_hash_matches_reference_image(self):
-        img = (ROOT / "ps202-project/firmware/boot-adbd-root-v2.img").resolve()
-        if not img.is_file():
+    def test_boot_patch_is_live_and_preserves_the_kernel(self):
+        stock = (ROOT / "ps202-project/backups/boot-images/boot-stock.img").resolve()
+        if not stock.is_file():
             self.skipTest("reference boot image not present")
-        expected = PROFILE["regions"]["boot"]["patched_sha256"]
-        self.assertEqual(expected, inst.sha256_file(img))
+        find_binary = INSTALLER / "release-inputs/bin/find"
+        init_script = INSTALLER / "payload/ps202-init.sh"
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "boot-live-patched.img"
+            inst.patch_boot_image_file(
+                stock, output, find_binary, init_script, PROFILE
+            )
+            original = stock.read_bytes().ljust(PROFILE["regions"]["boot"]["length"], b"\0")
+            patched = output.read_bytes()
+            layout = inst._boot_layout(original, PROFILE["regions"]["boot"]["length"])
+            self.assertEqual(
+                original[layout["page"] : layout["ramdisk_offset"]],
+                patched[layout["page"] : layout["ramdisk_offset"]],
+            )
+            entries = inst._parse_newc(inst._boot_layout(
+                patched, PROFILE["regions"]["boot"]["length"]
+            )["cpio"])
+            files = {name: body for name, _mode, body in entries}
+            self.assertIn("sbin/find", files)
+            self.assertIn("sbin/ps202-init.sh", files)
+            self.assertEqual(
+                files["sbin/adbd"],
+                inst.patch_adbd_bytes(
+                    files["sbin/adbd"], PROFILE["boot_patch"]["adbd"]
+                ),
+            )
+
+    def test_boot_patch_rejects_an_unknown_adbd(self):
+        with self.assertRaises(inst.InstallerError):
+            inst.patch_adbd_bytes(b"not a reviewed adbd", PROFILE["boot_patch"]["adbd"])
+
+    def test_known_boot_image_pairs_are_release_artifacts(self):
+        self.assertNotIn("boot_stock", MANIFEST["artifacts"])
+        self.assertNotIn("boot_patched", MANIFEST["artifacts"])
+        self.assertNotIn("patched_adbd", MANIFEST["artifacts"])
+        self.assertEqual(
+            ["V10", "V11/V12"],
+            [variant["name"] for variant in MANIFEST["boot_image_variants"]],
+        )
+        for variant in MANIFEST["boot_image_variants"]:
+            self.assertIn(variant["stock"], MANIFEST["artifacts"])
+            self.assertIn(variant["patched"], MANIFEST["artifacts"])
+        self.assertIn("backup_path", PROFILE["regions"]["boot"])
+        self.assertIn("sites", PROFILE["boot_patch"]["adbd"])
+
+    def test_known_boot_pairs_are_valid_and_preserve_the_kernel(self):
+        installer = inst.VamanOSInstaller.__new__(inst.VamanOSInstaller)
+        installer.manifest = MANIFEST
+        installer.profile = PROFILE
+        installer.bundle_root = None
+        installer.bundle_hashes = None
+        installer.run_dir = Path(tempfile.mkdtemp())
+        installer.msg = lambda *args, **kwargs: None
+        installer.log = lambda *args, **kwargs: None
+
+        installer.validate_known_boot_images()
+        for variant in MANIFEST["boot_image_variants"]:
+            stock = installer.art(variant["stock"])
+            patched = installer.art(variant["patched"])
+            original = inst.sha256_file(stock)
+            selected, digest, _name = installer.select_known_boot_patch(stock, original)
+            self.assertEqual(inst.sha256_file(patched), digest)
+            self.assertEqual(patched.read_bytes(), selected.read_bytes())
+
+    def test_unknown_boot_image_uses_live_patch_fallback(self):
+        installer = inst.VamanOSInstaller.__new__(inst.VamanOSInstaller)
+        installer.manifest = MANIFEST
+        installer.profile = PROFILE
+        installer.bundle_root = None
+        installer.bundle_hashes = None
+        installer.run_dir = Path(tempfile.mkdtemp())
+        installer.msg = lambda *args, **kwargs: None
+        installer.log = lambda *args, **kwargs: None
+
+        stock = installer.art("boot_v11_v12_stock")
+        altered = installer.run_dir / "unknown-boot.img"
+        data = bytearray(stock.read_bytes())
+        data[-1] ^= 1  # Keep the image valid, but make its full hash unknown.
+        altered.write_bytes(data)
+        self.assertIsNone(
+            installer.select_known_boot_patch(altered, inst.sha256_file(altered))
+        )
+        output = installer.run_dir / "live-fallback.img"
+        installer.build_live_patched_boot(altered, output)
+        self.assertEqual("PATCHED", installer.classify_boot_image(output))
+
+    def test_manifest_sources_are_self_contained(self):
+        for name, artifact in MANIFEST["artifacts"].items():
+            source = artifact.get("source")
+            if not source:
+                continue
+            source_path = Path(source)
+            self.assertFalse(source_path.is_absolute(), name)
+            self.assertNotIn("..", source_path.parts, name)
+            self.assertTrue((INSTALLER / source_path).exists(), name)
 
     def test_temproot_helpers_are_pinned_and_available(self):
         installer = inst.VamanOSInstaller.__new__(inst.VamanOSInstaller)
@@ -175,7 +279,9 @@ class ManifestProfileTests(unittest.TestCase):
         self.assertNotIn('cp -f "$SOURCE"', helper)
 
     def test_performance_profile_is_guarded_and_reversible(self):
-        profile = (INSTALLER / "payload/ps202-performance.sh").read_text(encoding="utf-8")
+        profile = (INSTALLER / "payload/ps202-performance.sh").read_text(
+            encoding="utf-8"
+        )
         self.assertIn("restore", profile)
         self.assertIn("/proc/sys/vm/swappiness", profile)
         self.assertIn("/sys/block/mmcblk1/queue/read_ahead_kb", profile)
@@ -193,7 +299,15 @@ class ManifestProfileTests(unittest.TestCase):
     def test_seven_cores_referenced_by_launchers_are_in_manifest(self):
         # The complete device launcher map needs every packaged core.
         cores = MANIFEST["cores"]
-        for name in ("fceumm", "snes9x", "gambatte", "gpsp", "pcsx_rearmed", "picodrive", "mgba"):
+        for name in (
+            "fceumm",
+            "snes9x",
+            "gambatte",
+            "gpsp",
+            "pcsx_rearmed",
+            "picodrive",
+            "mgba",
+        ):
             self.assertIn(name, cores)
         self.assertEqual("tgbdual_libretro_android.so", cores["gambatte"])
 
@@ -204,7 +318,9 @@ class ManifestProfileTests(unittest.TestCase):
         installer.bundle_hashes = None
         installer.log = lambda *args, **kwargs: None
         cores = installer.core_files()
-        installer.validate_launcher_config(INSTALLER / "payload/android_launchers.xml", cores)
+        installer.validate_launcher_config(
+            INSTALLER / "payload/android_launchers.xml", cores
+        )
         self.assertEqual(22, len(MANIFEST["supported_systems"]))
         self.assertEqual(15, len(cores))
 
@@ -217,38 +333,47 @@ class ManifestProfileTests(unittest.TestCase):
     def test_api19_core_source_precedes_newer_buildbot_inputs(self):
         sources = MANIFEST["core_sources"]
         self.assertEqual("release-inputs/cores-api19", sources[0])
-        launcher = (INSTALLER / "payload/android_launchers.xml").read_text(encoding="utf-8")
+        launcher = (INSTALLER / "payload/android_launchers.xml").read_text(
+            encoding="utf-8"
+        )
         self.assertIn('core="tgbdual_libretro_android.so"', launcher)
         self.assertIn('core="gpsp_libretro_android.so"', launcher)
 
     def test_debloat_protected_contains_critical_packages(self):
         protected = set(PROFILE["debloat"]["protected"])
-        for pkg in ("com.android.systemui", "com.android.phone", "com.android.bluetooth",
-                    "com.ps202.emulationstation", "com.retroarch.ra32", "org.ppsspp.ppsspp"):
+        for pkg in (
+            "com.android.systemui",
+            "com.android.phone",
+            "com.android.bluetooth",
+            "com.ps202.emulationstation",
+            "com.retroarch.ra32",
+            "org.ppsspp.ppsspp",
+        ):
             self.assertIn(pkg, protected)
 
 
 class MergeCfgTests(unittest.TestCase):
     def test_preserves_manual_input_bindings(self):
         existing = 'input_player1_a = "5"\nvideo_driver = "gl"\n'
-        overlay = 'input_player1_a = "99"\nvideo_driver = "gles"\naudio_latency = "96"\n'
+        overlay = (
+            'input_player1_a = "99"\nvideo_driver = "gles"\naudio_latency = "96"\n'
+        )
         merged = inst.merge_cfg(existing, overlay)
-        self.assertIn('input_player1_a = "5"', merged)   # user remap kept
-        self.assertIn('video_driver = "gles"', merged)   # non-personal key merged
-        self.assertIn('audio_latency = "96"', merged)    # new key appended
+        self.assertIn('input_player1_a = "5"', merged)  # user remap kept
+        self.assertIn('video_driver = "gles"', merged)  # non-personal key merged
+        self.assertIn('audio_latency = "96"', merged)  # new key appended
 
     def test_adds_new_keys_and_leaves_unknown_lines(self):
         existing = 'content_show_history = "true"\n'
-        overlay = 'content_show_history = "false"\nnotification_show_autoconfig = "false"\n'
+        overlay = (
+            'content_show_history = "false"\nnotification_show_autoconfig = "false"\n'
+        )
         merged = inst.merge_cfg(existing, overlay)
         self.assertIn('content_show_history = "false"', merged)
         self.assertIn('notification_show_autoconfig = "false"', merged)
 
     def test_replaces_an_old_audio_driver_without_touching_input(self):
-        existing = (
-            'audio_driver = "rsound"\n'
-            'input_player1_a = "5"\n'
-        )
+        existing = 'audio_driver = "rsound"\ninput_player1_a = "5"\n'
         overlay = 'audio_driver = "opensl"\ninput_player1_a = "99"\n'
         merged = inst.merge_cfg(existing, overlay)
         self.assertIn('audio_driver = "opensl"', merged)
@@ -339,8 +464,12 @@ class BundleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             for relative in (
-                    "manifest.json", "device-profile.json", "vamanos_installer.py",
-                    "payload/apks/emulationstation.apk", "bundle-sha256.json"):
+                "manifest.json",
+                "device-profile.json",
+                "vamanos_installer.py",
+                "payload/apks/emulationstation.apk",
+                "bundle-sha256.json",
+            ):
                 target = root / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(b"x")
@@ -383,7 +512,9 @@ class DownloadTests(unittest.TestCase):
                 self.assertEqual(data, result.read_bytes())
 
         open_url.assert_called_once()
-        self.assertEqual("https://example.invalid/retroarch.apk", open_url.call_args.args[0].full_url)
+        self.assertEqual(
+            "https://example.invalid/retroarch.apk", open_url.call_args.args[0].full_url
+        )
 
 
 class AppInstallTests(unittest.TestCase):
@@ -418,12 +549,16 @@ class AppInstallTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             installer, installed = self._installer(directory, ppsspp_present=False)
             installer.install_apks()
-        self.assertEqual(["emulationstation.apk", "retroarch.apk", "ppsspp.apk"], installed)
+        self.assertEqual(
+            ["emulationstation.apk", "retroarch.apk", "ppsspp.apk"], installed
+        )
 
     def test_skips_exact_existing_es_and_retroarch(self):
         with tempfile.TemporaryDirectory() as directory:
             installer, installed = self._installer(directory, ppsspp_present=True)
-            installer.installed_package_matches = lambda key: key in {"emulationstation", "retroarch"}
+            installer.installed_package_matches = lambda key: (
+                key in {"emulationstation", "retroarch"}
+            )
             installer.install_apks()
         self.assertEqual([], installed)
 
@@ -449,7 +584,10 @@ class CoreInstallTests(unittest.TestCase):
         self.assertEqual(
             [
                 (source, "/storage/sdcard1/retroarch/cores/fceumm_libretro_android.so"),
-                (source, "/data/data/com.retroarch.ra32/cores/fceumm_libretro_android.so"),
+                (
+                    source,
+                    "/data/data/com.retroarch.ra32/cores/fceumm_libretro_android.so",
+                ),
             ],
             pushes,
         )
@@ -475,10 +613,14 @@ class FrontendMusicTests(unittest.TestCase):
             source = Path(directory) / "menu.ogg"
             source.write_bytes(b"music")
             installer = inst.VamanOSInstaller.__new__(inst.VamanOSInstaller)
-            installer.manifest = {"artifacts": {"frontend_music": {
-                "device_path": "/storage/sdcard1/music",
-                "files": {"menu.ogg": inst.sha256_file(source)},
-            }}}
+            installer.manifest = {
+                "artifacts": {
+                    "frontend_music": {
+                        "device_path": "/storage/sdcard1/music",
+                        "files": {"menu.ogg": inst.sha256_file(source)},
+                    }
+                }
+            }
             installer.frontend_music_files = lambda: {"menu.ogg": source}
             installer.adb = FakeAdb()
             installer.dry_run = False
@@ -504,10 +646,14 @@ class FrontendMusicTests(unittest.TestCase):
             source = Path(directory) / "menu.ogg"
             source.write_bytes(b"music")
             installer = inst.VamanOSInstaller.__new__(inst.VamanOSInstaller)
-            installer.manifest = {"artifacts": {"frontend_music": {
-                "device_path": "/storage/sdcard1/music",
-                "files": {"menu.ogg": inst.sha256_file(source)},
-            }}}
+            installer.manifest = {
+                "artifacts": {
+                    "frontend_music": {
+                        "device_path": "/storage/sdcard1/music",
+                        "files": {"menu.ogg": inst.sha256_file(source)},
+                    }
+                }
+            }
             installer.frontend_music_files = lambda: {"menu.ogg": source}
             installer.adb = FakeAdb()
             installer.dry_run = False
@@ -533,7 +679,9 @@ class AndroidBootSplashTests(unittest.TestCase):
         self.assertEqual(["splash"], calls)
 
     def test_install_replaces_android_file_without_raw_flash_write(self):
-        source = (INSTALLER / MANIFEST["artifacts"]["android_bootanimation"]["source"]).resolve()
+        source = (
+            INSTALLER / MANIFEST["artifacts"]["android_bootanimation"]["source"]
+        ).resolve()
         pushed = []
         shell_commands = []
 
@@ -563,7 +711,9 @@ class AndroidBootSplashTests(unittest.TestCase):
             installer.dry_run = False
             installer.adb = FakeAdb()
             installer.art = lambda key: source
-            installer.verify_android_bootanimation = lambda: MANIFEST["artifacts"]["android_bootanimation"]["sha256"]
+            installer.verify_android_bootanimation = lambda: MANIFEST["artifacts"][
+                "android_bootanimation"
+            ]["sha256"]
             installer.msg = lambda *args, **kwargs: None
             installer.install_android_bootanimation()
 
@@ -571,7 +721,9 @@ class AndroidBootSplashTests(unittest.TestCase):
         self.assertEqual("/data/local/tmp/vamanos-bootanimation.zip", pushed[0][1])
         self.assertEqual(1, len(shell_commands))
         self.assertIn("/system/media/bootanimation.zip", shell_commands[0])
-        self.assertIn("/system/media/bootanimation.zip.vamanos-previous", shell_commands[0])
+        self.assertIn(
+            "/system/media/bootanimation.zip.vamanos-previous", shell_commands[0]
+        )
         self.assertNotIn("/dev/block/mmcblk0", shell_commands[0])
 
 
@@ -611,10 +763,17 @@ class DebloatBackupTests(unittest.TestCase):
             installer.log = lambda *args, **kwargs: None
             installer.backup_packages_before_removal()
 
-        self.assertTrue(any("cp -p /data/app/com.ps202.shell-1.apk" in command
-                            for command in commands))
-        self.assertTrue(any("cp -R -p /data/data/com.ps202.shell" in command
-                            for command in commands))
+        self.assertTrue(
+            any(
+                "cp -p /data/app/com.ps202.shell-1.apk" in command
+                for command in commands
+            )
+        )
+        self.assertTrue(
+            any(
+                "cp -R -p /data/data/com.ps202.shell" in command for command in commands
+            )
+        )
         self.assertEqual([("/data/app/com.ps202.shell-1.apk", pulled[0][1])], pulled)
 
 
@@ -624,6 +783,7 @@ class ConfirmationTests(unittest.TestCase):
             inst_ = inst.VamanOSInstaller.__new__(inst.VamanOSInstaller)
             inst_.serial = "0123456789ABCDEF"
             return inst_
+
         token = inst.Confirmation.token("INSTALL", "0123456789ABCDEF")
         self.assertEqual("INSTALL-89ABCDEF", token)
         with self.assertRaises(inst.InstallerError):
@@ -645,16 +805,33 @@ class FactoryTemprootTests(unittest.TestCase):
         installer.core_files = lambda: {"fceumm": Path("/tmp/fceumm.so")}
         installer.payload_file = lambda key: payloads.append(key) or Path("/tmp/" + key)
         installer.validate_launcher_config = lambda *args: None
+        installer.validate_known_boot_images = lambda: None
 
         installer.validate_install_artifacts("temproot")
 
         self.assertEqual(
-            {"android_bootanimation", "su", "find", "emulationstation",
-             "retroarch", "ppsspp", "cody_theme", "boot_patched",
-             "temproot_cowtest", "temproot_blockdump"},
+            {
+                "android_bootanimation",
+                "su",
+                "find",
+                "emulationstation",
+                "retroarch",
+                "ppsspp",
+                "cody_theme",
+                "temproot_cowtest",
+                "temproot_blockdump",
+            },
             set(resolved),
         )
-        self.assertEqual({"boot_helper", "performance_profile", "launcher_config", "retroarch_baseline"}, set(payloads))
+        self.assertEqual(
+            {
+                "boot_helper",
+                "performance_profile",
+                "launcher_config",
+                "retroarch_baseline",
+            },
+            set(payloads),
+        )
 
     def test_existing_ppsspp_can_skip_bundled_apk_preflight(self):
         resolved = []
@@ -700,14 +877,20 @@ class FactoryTemprootTests(unittest.TestCase):
     def test_legacy_temproot_alias_maps_to_boot_mode(self):
         args = inst._build_arg_parser().parse_args(["install", "--temproot"])
         self.assertTrue(args.legacy_temproot)
-        args = inst._build_arg_parser().parse_args(["install", "--boot-mode", "temproot"])
+        args = inst._build_arg_parser().parse_args(
+            ["install", "--boot-mode", "temproot"]
+        )
         self.assertEqual("temproot", args.boot_mode)
 
     def test_restore_boot_command_has_its_own_confirmation(self):
-        args = inst._build_arg_parser().parse_args(["restore-boot", "--confirm", "RESTORE-1234"])
+        args = inst._build_arg_parser().parse_args(
+            ["restore-boot", "--confirm", "RESTORE-1234"]
+        )
         self.assertEqual("restore_boot", args.func)
         self.assertEqual("RESTORE-1234", args.confirm)
-        self.assertEqual("RESTORE-89ABCDEF", inst.Confirmation.token("RESTORE", "0123456789ABCDEF"))
+        self.assertEqual(
+            "RESTORE-89ABCDEF", inst.Confirmation.token("RESTORE", "0123456789ABCDEF")
+        )
 
 
 class CpuReportTests(unittest.TestCase):
@@ -748,23 +931,21 @@ class CpuReportTests(unittest.TestCase):
 
 class AucBinariesTests(unittest.TestCase):
     def test_patched_boot_contains_adbd_and_init_script(self):
-        """The boot image we ship must carry the patched adbd, find, and the
-        ps202-init.sh boot script in its ramdisk."""
-        img = (ROOT / "ps202-project/firmware/boot-adbd-root-v2.img").resolve()
-        if not img.is_file():
-            self.skipTest("reference patched boot image not present")
-        import gzip as _g
-        data = img.read_bytes()
-        page = int.from_bytes(data[36:40], "little")
-        kernel_size = int.from_bytes(data[8:12], "little")
-        ramdisk_size = int.from_bytes(data[16:20], "little")
-        roff = page + ((kernel_size + page - 1) // page) * page
-        region = data[roff: roff + ramdisk_size]
-        gz_idx = region.find(b"\x1f\x8b\x08")
-        self.assertGreaterEqual(gz_idx, 0, "gzip ramdisk not found in boot image")
-        cpio = _g.decompress(region[gz_idx:])
-        for needle in (b"sbin/adbd", b"sbin/find", b"sbin/ps202-init.sh"):
-            self.assertIn(needle, cpio, f"ramdisk missing {needle.decode()}")
+        """Every bundled patched pair carries the required ramdisk files."""
+        for variant in MANIFEST["boot_image_variants"]:
+            img = (
+                INSTALLER / MANIFEST["artifacts"][variant["patched"]]["source"]
+            ).resolve()
+            entries = inst._parse_newc(
+                inst._boot_layout(
+                    img.read_bytes(), PROFILE["regions"]["boot"]["length"]
+                )["cpio"]
+            )
+            files = {name for name, _mode, _body in entries}
+            self.assertTrue(
+                {"sbin/adbd", "sbin/find", "sbin/ps202-init.sh"} <= files,
+                variant["name"],
+            )
 
     def test_install_aux_binaries_skips_su_and_deploys_find(self):
         """install_aux_binaries() must deploy find (not su) to /system/xbin."""

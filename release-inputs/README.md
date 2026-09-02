@@ -17,6 +17,20 @@ PPSSPP and uses this bundled copy only as a fallback when PPSSPP is missing.
   RetroArch `1.20.0_GIT` APK for Android 4.4.2/API 19 (version code 11).
 - `bin/su` — the live `/system/xbin/su` fetched from the reference device
   (SHA-256 `48bdf38d…`). Used for step 3 of the install.
+- `bin/find` — the PS202 ARMv7 `find` binary installed at
+  `/system/xbin/find`.
+- `boot/v10_stock.img` + `boot/v10_patched.img` — the matching V10 boot pair.
+- `boot/v11_v12_stock.img` + `boot/v11_v12_patched.img` — the matching V11/V12
+  pair. V11 and V12 have the same boot image, so they share one pair.
+  The installer compares the full boot-region checksum before using a pair. If
+  a supported PS202 has a different boot image, it captures that image, saves
+  it for rollback, and patches only its ramdisk instead.
+- The V10 pair was prepared from the supplied V10 backup and padded to the
+  PS202 boot partition size. It still needs a real V10 handheld boot test
+  before a public release is advertised as V10-tested.
+- A universal boot image and a loose pre-patched `adbd` are not used. The
+  installer never sends a known pair to a device unless its exact image hash
+  and kernel match.
 - `apks/ppsspp.apk` — a fallback `org.ppsspp.ppsspp` APK (from the reference
   vendor partition, SHA-256 `7966aa71…`). It is installed only when the
   handheld does not already have PPSSPP. Its `manifest.json` source is this

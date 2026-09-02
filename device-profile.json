@@ -14,8 +14,25 @@
     "boot": {
       "offset": 30932992,
       "length": 6291456,
-      "stock_sha256": "1bbc46ff83da7c952ca527591a675a8030b1b837963499b1b7b0a9015c42b6ec",
-      "patched_sha256": "abe727c593688c2193f2767a706173851e69fdd2e66c6ef22da523166d635ed1"
+      "backup_path": "/storage/sdcard1/ps202/backups/boot/boot-before-vamanos.img",
+      "backup_metadata_path": "/storage/sdcard1/ps202/backups/boot/boot-before-vamanos.json"
+    }
+  },
+  "boot_patch": {
+    "adbd_path": "sbin/adbd",
+    "find_path": "sbin/find",
+    "init_path": "sbin/ps202-init.sh",
+    "adbd": {
+      "sites": [
+        {
+          "needle": "4ff4fa6011f060e8",
+          "replacement": "4ff0000011f060e8"
+        },
+        {
+          "needle": "4ff4fa601df0a2ec",
+          "replacement": "4ff000001df0a2ec"
+        }
+      ]
     }
   },
   "android_boot_splash": {
@@ -73,7 +90,7 @@
     ]
   },
   "notes": [
-    "Boot region: only the 6 MiB boot region at offset 0x1D80000 is ever written for root ADB; read back and SHA-256 verified before reboot.",
+    "Boot region: the 6 MiB region at offset 0x1D80000 is captured from the connected device, backed up on the SD card, patched in its ramdisk, and read back with SHA-256 verification before reboot.",
     "Android boot splash: /system/media/bootanimation.zip is backed up, replaced, and pulled back for SHA-256 verification.",
     "The raw MTK logo region at offset 0x2A40000 is intentionally never written by the installer.",
     "Preloader, lk/uboot, nvram, secro, protect_* and the whole flash are never written.",

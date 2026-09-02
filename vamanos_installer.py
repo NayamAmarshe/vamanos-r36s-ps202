@@ -1,20 +1,23 @@
 #!/usr/bin/env python3
 """vamanOS for R36S PS202 — cross-platform installer.
 
-Transforms a factory PS202 handheld into the vamanOS appliance by replaying
-the exact verified-state of the reference device: patched-root boot, Android
-boot animation, /system/xbin/su, boot helper, EmulationStation, RetroArch,
-PPSSPP, the tuned RetroArch config, launcher map, cores, and the safe debloat
-list.
+Transforms a factory PS202 handheld into the vamanOS appliance: the installer
+matches the connected boot image to a known V10 or V11/V12 pair when possible,
+otherwise patches the connected device's own boot image, then installs the
+Android boot animation, /system/xbin/su, boot helper, EmulationStation,
+RetroArch, PPSSPP, the tuned RetroArch config, launcher map, cores, and the
+safe debloat list.
 
 Design rules (from docs/PS202-OPERATIONS.md):
-  - Only the boot region (0x1D80000, 6 MiB) is written in raw flash, and only
-    for the reviewed root-ADB boot patch. It is read back and SHA-256 verified
-    before reboot. The splash is installed in Android at
+  - Only the boot region (0x1D80000, 6 MiB) is written in raw flash. The
+    connected image is captured and backed up. Exact known V10 and V11/V12
+    images use their matching tested patched pair; other supported PS202
+    images are patched in their own ramdisk. The result is read back with
+    SHA-256 verification before reboot. The splash is installed in Android at
     /system/media/bootanimation.zip, never in a raw flash region.
   - Preloader / lk / nvram / secro / protect_* / whole flash are never touched.
   - Factory units boot unrooted: use the dirtycow temp-root path first to
-    write the patched boot once, then reboot to root ADB.
+    capture and patch their own boot image, then reboot to root ADB.
   - User data (ROMs, saves, states, input maps) is never cleared or erased.
   - protected packages are never disabled/removed; no 'pm clear' is used.
   - Only the Python standard library is used; a single engine drives the
@@ -24,7 +27,7 @@ Usage (run from this directory):
   python3 vamanos_installer.py doctor                 # read-only health check
   python3 vamanos_installer.py splash                 # Android bootanimation only
   python3 vamanos_installer.py install                # factory or rooted unit
-  python3 vamanos_installer.py restore-boot           # restore reviewed stock boot
+  python3 vamanos_installer.py restore-boot           # restore the device backup
   python3 vamanos_installer.py assemble               # build dist zip
   python3 vamanos_installer.py verify
 """
@@ -32,12 +35,14 @@ Usage (run from this directory):
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
 import json
 import os
 import re
 import shlex
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -387,8 +392,339 @@ def discover_bundle_root(directory: Path = INSTALLER_DIR) -> Optional[Path]:
 
 
 # --------------------------------------------------------------------------- #
-# Boot image construction (only used for host-side unit tests / assembly)
+# Live boot-image patching
 # --------------------------------------------------------------------------- #
+
+
+ANDROID_BOOT_MAGIC = b"ANDROID!"
+MTK_RAMDISK_MAGIC = b"\x88\x16\x88\x58"
+MTK_RAMDISK_TAG = b"ROOTFS"
+GZIP_MAGIC = b"\x1f\x8b\x08"
+MTK_RAMDISK_HEADER_SIZE = 0x200
+DEFAULT_ADBD_PATCH = {
+    "sites": [
+        {
+            "needle": "4ff4fa6011f060e8",
+            "replacement": "4ff0000011f060e8",
+        },
+        {
+            "needle": "4ff4fa601df0a2ec",
+            "replacement": "4ff000001df0a2ec",
+        },
+    ]
+}
+
+
+def _hex_bytes(value: str, field: str) -> bytes:
+    try:
+        result = bytes.fromhex(value)
+    except ValueError as exc:
+        raise InstallerError(f"boot patch field {field} is not hexadecimal") from exc
+    if not result:
+        raise InstallerError(f"boot patch field {field} is empty")
+    return result
+
+
+def patch_adbd_bytes(adbd: bytes, patch_spec: Optional[dict] = None) -> bytes:
+    """Patch the privilege-drop instructions in the device's own adbd.
+
+    The patch is deliberately signature-based. We never replace adbd with a
+    binary from another firmware build. If the expected instruction sequence
+    is absent or appears an unexpected number of times, installation stops.
+    """
+    spec = patch_spec or DEFAULT_ADBD_PATCH
+    sites = spec.get("sites")
+    if sites:
+        patched = bytearray(adbd)
+        changed = False
+        for index, site in enumerate(sites, start=1):
+            needle = _hex_bytes(str(site.get("needle", "")), f"sites[{index}].needle")
+            replacement = _hex_bytes(
+                str(site.get("replacement", "")), f"sites[{index}].replacement"
+            )
+            if len(needle) != len(replacement):
+                raise InstallerError("boot adbd patch must keep the instruction length")
+            offsets = []
+            cursor = 0
+            while True:
+                found = patched.find(needle, cursor)
+                if found < 0:
+                    break
+                offsets.append(found)
+                cursor = found + len(needle)
+            if len(offsets) == 1:
+                offset = offsets[0]
+                patched[offset : offset + len(replacement)] = replacement
+                changed = True
+                continue
+            if not offsets:
+                # Idempotence is accepted only when this complete contextual
+                # replacement is already present exactly once.
+                if patched.count(replacement) == 1:
+                    continue
+                raise InstallerError(
+                    "the device's adbd does not match the reviewed vamanOS patch "
+                    f"site {index}; no boot image was written"
+                )
+            raise InstallerError(
+                f"the device's adbd patch site {index} appeared {len(offsets)} times; "
+                "this firmware is not yet supported"
+            )
+        return bytes(patched) if changed else adbd
+
+    # Accept the original compact recipe format for older local profiles.
+    needle = _hex_bytes(str(spec.get("needle", "")), "needle")
+    replacement = _hex_bytes(str(spec.get("replacement", "")), "replacement")
+    expected = int(spec.get("count", 0))
+    if len(needle) != len(replacement) or expected <= 0:
+        raise InstallerError("invalid boot adbd patch recipe")
+    offsets = []
+    cursor = 0
+    while True:
+        found = adbd.find(needle, cursor)
+        if found < 0:
+            break
+        offsets.append(found)
+        cursor = found + len(needle)
+    if len(offsets) != expected:
+        raise InstallerError(
+            "the device's adbd does not match the reviewed vamanOS patch pattern; "
+            "no boot image was written"
+        )
+    patched = bytearray(adbd)
+    for offset in offsets:
+        patched[offset : offset + len(replacement)] = replacement
+    return bytes(patched)
+
+
+def _parse_newc(cpio: bytes) -> List[tuple]:
+    """Parse a gzip-cpio ``newc`` archive into (name, mode, body) tuples."""
+    entries = []
+    offset = 0
+    trailer_seen = False
+    while offset + 110 <= len(cpio):
+        magic = cpio[offset : offset + 6]
+        if magic not in (b"070701", b"070702"):
+            raise InstallerError(f"invalid cpio header at offset {offset}")
+
+        def field(start: int) -> int:
+            end = start + 8
+            try:
+                return int(cpio[offset + start : offset + end].decode("ascii"), 16)
+            except (UnicodeDecodeError, ValueError) as exc:
+                raise InstallerError(f"invalid cpio field at offset {offset}") from exc
+
+        mode = field(14)
+        size = field(54)
+        name_len = field(94)
+        if name_len < 1:
+            raise InstallerError("cpio entry has no name")
+        name_start = offset + 110
+        name_end = name_start + name_len
+        name_padded_end = align_up_maybe(offset + 110 + name_len, 4)
+        body_end = name_padded_end + size
+        entry_end = align_up_maybe(body_end, 4)
+        if entry_end > len(cpio) or cpio[name_end - 1 : name_end] != b"\x00":
+            raise InstallerError("cpio entry extends past the archive")
+        try:
+            name = cpio[name_start : name_end - 1].decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise InstallerError("cpio entry name is not UTF-8") from exc
+        body = cpio[name_padded_end:body_end]
+        offset = entry_end
+        if name == "TRAILER!!!":
+            trailer_seen = True
+            break
+        entries.append((name, mode, body))
+
+    if not trailer_seen:
+        raise InstallerError("cpio archive has no TRAILER!!! entry")
+    return entries
+
+
+def align_up_maybe(value: int, page: int) -> int:
+    return (value + page - 1) // page * page
+
+
+def _build_newc(entries: List[tuple]) -> bytes:
+    """Build a valid cpio ``newc`` archive while preserving file modes."""
+    out = bytearray()
+
+    def hdr(name_len: int, mode: int, size: int, ino: int) -> bytes:
+        # newc has 13 eight-digit hexadecimal fields after the six-byte magic:
+        # ino, mode, uid, gid, nlink, mtime, filesize, devmajor, devminor,
+        # rdevmajor, rdevminor, namesize, check.
+        fields = [
+            ino,
+            mode,
+            0,
+            0,
+            1,
+            0,
+            size,
+            0,
+            0,
+            0,
+            0,
+            name_len,
+            0,
+        ]
+        return b"070701" + b"".join(f"{value & 0xFFFFFFFF:08x}".encode() for value in fields)
+
+    for ino, (name, mode, body) in enumerate(entries, start=0x101):
+        encoded_name = name.encode("utf-8") + b"\x00"
+        out += hdr(len(encoded_name), mode, len(body), ino)
+        out += encoded_name
+        out += b"\x00" * (
+            align_up_maybe(110 + len(encoded_name), 4) - 110 - len(encoded_name)
+        )
+        out += body
+        out += b"\x00" * (align_up_maybe(len(body), 4) - len(body))
+
+    trailer = b"TRAILER!!!\x00"
+    out += hdr(len(trailer), 0, 0, 0)
+    out += trailer
+    out += b"\x00" * (align_up_maybe(110 + len(trailer), 4) - 110 - len(trailer))
+    return bytes(out)
+
+
+def _boot_layout(data: bytes, region_length: Optional[int] = None) -> dict:
+    """Validate an Android/MTK boot image and return its component offsets."""
+    if len(data) < 40 or data[:8] != ANDROID_BOOT_MAGIC:
+        raise InstallerError("live boot region is not an Android boot image")
+    page = struct.unpack_from("<I", data, 36)[0]
+    kernel_size = struct.unpack_from("<I", data, 8)[0]
+    ramdisk_size = struct.unpack_from("<I", data, 16)[0]
+    if page < 512 or page > 65536 or page & (page - 1):
+        raise InstallerError(f"live boot image has an invalid page size: {page}")
+    kernel_offset = page
+    ramdisk_offset = align_up(kernel_offset + kernel_size, page)
+    if ramdisk_size <= MTK_RAMDISK_HEADER_SIZE:
+        raise InstallerError("live boot image has no usable ramdisk")
+    if ramdisk_offset + ramdisk_size > len(data):
+        raise InstallerError("live boot ramdisk extends beyond the captured region")
+    if region_length is not None and len(data) != region_length:
+        raise InstallerError(
+            f"captured boot region is {len(data)} bytes; expected {region_length}"
+        )
+    region = data[ramdisk_offset : ramdisk_offset + ramdisk_size]
+    if region[:4] != MTK_RAMDISK_MAGIC or region[8:14] != MTK_RAMDISK_TAG:
+        raise InstallerError("live boot ramdisk is not the expected MTK ROOTFS format")
+    gzip_offset = region.find(GZIP_MAGIC, 14, min(ramdisk_size, 4096))
+    if gzip_offset < 0:
+        raise InstallerError("live boot ramdisk has no gzip cpio payload")
+    wrapper_size = struct.unpack_from("<I", region, 4)[0]
+    if wrapper_size != ramdisk_size - gzip_offset:
+        raise InstallerError(
+            f"MTK ramdisk payload size {wrapper_size} does not match Android header "
+            f"{ramdisk_size} minus wrapper {gzip_offset}"
+        )
+    try:
+        cpio = gzip.decompress(region[gzip_offset:])
+    except (OSError, EOFError) as exc:
+        raise InstallerError(f"could not decompress the live boot ramdisk: {exc}") from exc
+    return {
+        "page": page,
+        "kernel_size": kernel_size,
+        "ramdisk_size": ramdisk_size,
+        "ramdisk_offset": ramdisk_offset,
+        "gzip_offset": gzip_offset,
+        "cpio": cpio,
+    }
+
+
+def patch_boot_image_data(
+    data: bytes,
+    find_binary: bytes,
+    init_script: bytes,
+    profile: dict,
+    replacement_adbd: Optional[bytes] = None,
+) -> bytes:
+    """Patch a captured boot image without importing a kernel from elsewhere."""
+    region = profile["regions"]["boot"]
+    region_length = int(region["length"])
+    if len(data) > region_length:
+        raise InstallerError("captured boot image is larger than the PS202 boot region")
+    data = data.ljust(region_length, b"\x00")
+    layout = _boot_layout(data, region_length=region_length)
+    patch = profile.get("boot_patch", {}).get("adbd", DEFAULT_ADBD_PATCH)
+    entries = _parse_newc(layout["cpio"])
+    adbd_path = profile.get("boot_patch", {}).get("adbd_path", "sbin/adbd")
+    find_path = profile.get("boot_patch", {}).get("find_path", "sbin/find")
+    init_path = profile.get("boot_patch", {}).get("init_path", "sbin/ps202-init.sh")
+    found = {adbd_path: False, find_path: False, init_path: False}
+    new_entries = []
+    for name, mode, body in entries:
+        if name == adbd_path:
+            if mode & 0o170000 != 0o100000:
+                raise InstallerError("live boot sbin/adbd is not a regular file")
+            body = (
+                replacement_adbd
+                if replacement_adbd is not None
+                else patch_adbd_bytes(body, patch)
+            )
+            mode = 0o100750
+            found[name] = True
+        elif name == find_path:
+            body = find_binary
+            mode = 0o100750
+            found[name] = True
+        elif name == init_path:
+            body = init_script
+            mode = 0o100750
+            found[name] = True
+        new_entries.append((name, mode, body))
+
+    if not found[adbd_path]:
+        raise InstallerError(f"live boot ramdisk is missing {adbd_path}")
+    if not found[find_path]:
+        new_entries.append((find_path, 0o100750, find_binary))
+    if not found[init_path]:
+        new_entries.append((init_path, 0o100750, init_script))
+
+    compressed = gzip.compress(_build_newc(new_entries), compresslevel=9, mtime=0)
+    new_ramdisk_size = layout["gzip_offset"] + len(compressed)
+    if new_ramdisk_size > region_length - layout["ramdisk_offset"]:
+        raise InstallerError(
+            f"patched ramdisk is too large ({new_ramdisk_size} bytes) for the boot region"
+        )
+
+    ramdisk = bytearray(b"\x00" * (region_length - layout["ramdisk_offset"]))
+    prefix = bytearray(
+        data[
+            layout["ramdisk_offset"] : layout["ramdisk_offset"] + layout["gzip_offset"]
+        ]
+    )
+    struct.pack_into("<I", prefix, 4, new_ramdisk_size - layout["gzip_offset"])
+    ramdisk[: layout["gzip_offset"]] = prefix
+    ramdisk[layout["gzip_offset"] : new_ramdisk_size] = compressed
+
+    header = bytearray(data[: layout["page"]])
+    struct.pack_into("<I", header, 16, new_ramdisk_size)
+    output = bytearray(data)
+    output[: layout["page"]] = header
+    start = layout["ramdisk_offset"]
+    output[start:] = ramdisk
+    return bytes(output)
+
+
+def patch_boot_image_file(
+    source: Path,
+    output: Path,
+    find_binary: Path,
+    init_script: Path,
+    profile: dict,
+) -> str:
+    """Patch a host-captured boot region and return its resulting SHA-256."""
+    output.parent.mkdir(parents=True, exist_ok=True)
+    patched = patch_boot_image_data(
+        source.read_bytes(),
+        find_binary.read_bytes(),
+        init_script.read_bytes(),
+        profile,
+    )
+    output.write_bytes(patched)
+    return sha256_file(output)
 
 
 def build_patched_boot(
@@ -399,125 +735,23 @@ def build_patched_boot(
     init_script: Path,
     profile: dict,
 ) -> str:
-    """Reproduce the verified boot-adbd-root-v2.img from stock boot + patches.
+    """Legacy host-side builder retained for reproducibility tools.
 
-    This mirrors the manual process used to create the reference image. It is
-    used for reproducibility testing; the installer normally ships the
-    pre-built boot image and just verifies its hash.
+    The installer no longer uses a prebuilt patched image. It captures the
+    connected device's boot region and applies the same patch in memory. This
+    compatibility wrapper accepts the old patched-adbd argument for callers
+    that still want to build a reference image offline.
     """
-    import gzip as _gz
-    import struct
-
-    data = stock.read_bytes()
-    page = struct.unpack_from("<I", data, 36)[0]
-    kernel_size = struct.unpack_from("<I", data, 8)[0]
-    ramdisk_size = struct.unpack_from("<I", data, 16)[0]
-
-    kernel_offset = page
-    ramdisk_offset = align_up(kernel_offset + kernel_size, page)
-
-    # The ramdisk region is MTK-wrapped: 4-byte magic + 4-byte size +4-byte tag
-    # then the gzip cpio. Repack using the wrapper to stay byte-compatible.
-    wrapped = data[ramdisk_offset + 12 : ramdisk_offset + ramdisk_size]
-
-    def _gzip_roundtrip(raw: bytes) -> bytes:
-        return _gz.compress(raw)
-
-    # Decompress the existing ramdisk payload, modify the cpio, recompress.
-    cpio_data = _gz.decompress(wrapped)
-    entries = _parse_newc(cpio_data)
-    new_entries = []
-    for name, mode, body in entries:
-        if name == "sbin/adbd":
-            body = patched_adbd.read_bytes()
-            mode = body_mtime_placeholder = None
-            new_entries.append((name, 0o100750, body))
-        elif name == "sbin/find":
-            new_entries.append((name, 0o100750, find_binary.read_bytes()))
-        elif name == "sbin/ps202-init.sh":
-            new_entries.append((name, 0o100750, init_script.read_bytes()))
-        else:
-            new_entries.append((name, mode, body))
-
-    new_cpio = _build_newc(new_entries)
-    new_wrapped = _gz.compress(new_cpio)
-    new_wrapped = wrapped[:12] + new_wrapped
-
-    # Reassemble the boot image: header + kernel + padded + new ramdisk.
-    header = bytearray(data[:page])
-    ramdisk_region = bytearray(b"\x00" * len(new_wrapped))
-    ramdisk_region[: len(new_wrapped)] = new_wrapped
-    out = bytearray(data[:ramdisk_offset])
-    out += ramdisk_region
-    # keep trailing padding (region length) intact
-    out += data[ramdisk_offset + len(new_wrapped) :]
-    output.write_bytes(bytes(out))
+    output.parent.mkdir(parents=True, exist_ok=True)
+    patched = patch_boot_image_data(
+        stock.read_bytes(),
+        find_binary.read_bytes(),
+        init_script.read_bytes(),
+        profile,
+        replacement_adbd=patched_adbd.read_bytes(),
+    )
+    output.write_bytes(patched)
     return sha256_file(output)
-
-
-def _parse_newc(cpio: bytes) -> List[tuple]:
-    entries = []
-    offset = 0
-    while offset + 110 <= len(cpio):
-        magic = cpio[offset : offset + 6]
-        if magic not in (b"070701", b"070702"):
-            break
-
-        # newc header is 110 bytes (but 4-byte padded); fields are hex ascii
-        def field(start: int, end: int) -> int:
-            return int(cpio[offset + start : offset + end].decode(), 16)
-
-        size = field(54, 62)
-        name_len = field(94, 98)
-        name = cpio[offset + 110 : offset + 110 + name_len - 1].decode()
-        mode = field(14, 22)
-        body = cpio[
-            offset + 110 + align_up_maybe(name_len, 4) : offset
-            + 110
-            + align_up_maybe(name_len, 4)
-            + size
-        ]
-        entries.append((name, mode, body))
-        offset += align_up_maybe(110 + align_up_maybe(name_len, 4) + size, 4)
-    return entries
-
-
-def align_up_maybe(value: int, page: int) -> int:
-    return (value + page - 1) // page * page
-
-
-def _build_newc(entries: List[tuple]) -> bytes:
-    out = bytearray()
-    inode = 0x101
-    trailer = b"TRAILER!!!"
-
-    def hdr(name_len: int, mode: int, size: int, ino: int) -> bytes:
-        fields = [
-            "070701",  # magic
-            f"{ino:08x}",
-            0x00000000,
-            f"{mode:08x}",
-            0x00000000,
-            f"{size:08x}",
-            f"{inode * 0x10000 & 0xFFFFFFFF:08x}",
-            0x00000000,
-            0x00000001,
-            name_len,
-            0x00000000,
-        ]
-        return "".join(fields).encode()
-
-    for name, mode, body in entries:
-        nlen = len(name.encode()) + 1
-        out += hdr(nlen, mode, len(body), inode)
-        out += name.encode() + b"\x00"
-        out += body
-        out += b"\x00" * ((4 - (len(out) % 4)) % 4)
-        inode += 1
-    nlen = len(trailer) + 1
-    out += hdr(nlen, 0, 0, inode)
-    out += trailer + b"\x00"
-    return bytes(out)
 
 
 # --------------------------------------------------------------------------- #
@@ -611,17 +845,18 @@ class VamanOSInstaller:
             "emulationstation": "payload/apks/emulationstation.apk",
             "ppsspp": "payload/apks/ppsspp.apk",
             "su": "payload/bin/su",
-            "patched_adbd": "payload/bin/adbd",
             "find": "payload/bin/find",
             "temproot_cowtest": "payload/bin/cowtest",
             "temproot_blockdump": "payload/bin/runas-blockdump",
-            "boot_stock": "payload/boot/boot_stock.img",
-            "boot_patched": "payload/boot/boot_patched.img",
             "android_bootanimation": "payload/boot/android_bootanimation.zip",
             "cody_theme": "payload/themes/EPIC-CODY.zip",
             "frontend_music": "payload/music",
         }
-        rel = mapping.get(key)
+        spec = self.manifest.get("artifacts", {}).get(key, {})
+        # Most payload paths are conventional. Boot-image variants declare
+        # their exact payload path in the manifest so the same resolver works
+        # for both a source checkout and an extracted release ZIP.
+        rel = spec.get("bundle_path") or mapping.get(key)
         if not rel:
             return None
         candidate = self.bundle_root / rel
@@ -895,12 +1130,12 @@ class VamanOSInstaller:
         ]
         if require_ppsspp:
             required.append("ppsspp")
-        if boot_mode in ("force", "temproot"):
-            required.append("boot_patched")
         if boot_mode == "temproot":
             required.extend(("temproot_cowtest", "temproot_blockdump"))
         for key in required:
             self.art(key)
+        if boot_mode in ("force", "temproot"):
+            self.validate_known_boot_images()
         self.frontend_music_files()
         cores = self.core_files()
         payloads = {}
@@ -937,10 +1172,12 @@ class VamanOSInstaller:
                 )
                 self.region_check = boot
                 report["boot_sha256"] = boot
+                report["boot_patch_source"] = "live device image"
             else:
                 # A factory shell cannot read mmcblk0. The temporary-root
                 # bootstrap must run before boot-state inspection is possible.
                 report["boot_read_deferred"] = True
+                report["boot_patch_source"] = "live device image after temp-root"
                 self.log("preflight: boot read deferred until temproot bootstrap")
         self.log("preflight: " + json.dumps(report, sort_keys=True))
         return report
@@ -1011,20 +1248,30 @@ class VamanOSInstaller:
             raise InstallerError(f"could not read {name} region from device")
         return sha256_file(output)
 
-    def write_region(self, name: str, source: Path) -> None:
+    def write_region(
+        self, name: str, source: Path, allowed_hashes: Optional[set] = None
+    ) -> None:
         region = self._region(name)
         sec = region["offset"] // 512
         count = region["length"] // 512
         remote = f"/data/local/vamanos-{name}-write.img"
-        self.adb.push(source, remote)
+        if source.stat().st_size != region["length"]:
+            raise InstallerError(
+                f"refusing to write {name}: image is {source.stat().st_size} bytes; "
+                f"expected exactly {region['length']}"
+            )
         actual = sha256_file(source)
-        # Only reviewed images (stock or the profile's target image) may be
-        # written into a firmware region.
-        allowed = {region["stock_sha256"], self._target_hash(name)}
+        # The live patcher supplies the hash of the image it just constructed.
+        # There is no universal boot-image hash because each PS202 firmware
+        # revision keeps its own kernel.
+        allowed = set(allowed_hashes or ())
+        if not allowed:
+            raise InstallerError(f"refusing to write {name}: no approved image hash")
         if actual not in allowed:
             raise InstallerError(
                 f"refusing to write {name}: image hash {actual} is not a reviewed image"
             )
+        self.adb.push(source, remote)
         result = self.adb.shell(
             f"dd if={remote} of=/dev/block/mmcblk0 bs=512 seek={sec} count={count}; sync",
             check=False,
@@ -1034,16 +1281,9 @@ class VamanOSInstaller:
                 f"could not write {name} region: {result.stderr.strip()}"
             )
 
-    def _target_hash(self, name: str) -> str:
-        region = self._region(name)
-        if name == "boot":
-            return region["patched_sha256"]
-        return region["custom_sha256"]
-
-    def verify_readback(self, name: str) -> str:
+    def verify_readback(self, name: str, expected: str) -> str:
         out = self.run_dir / f"{name}-readback.bin"
         digest = self.read_current_region(name, out)
-        expected = self._target_hash(name)
         if digest != expected:
             raise InstallerError(
                 f"{name} readback SHA-256 {digest} != expected {expected}"
@@ -1072,13 +1312,234 @@ class VamanOSInstaller:
         output.write_bytes(bytes.fromhex(hex_digits))
         return sha256_file(output)
 
+    def _boot_backup_paths(self) -> tuple:
+        region = self._region("boot")
+        backup = region.get("backup_path")
+        metadata = region.get("backup_metadata_path")
+        if not backup or not metadata:
+            raise InstallerError("device profile has no live boot backup paths")
+        return backup, metadata
+
+    def save_boot_backup(self, source: Path, digest: str) -> None:
+        """Keep the exact pre-patch boot region on the user's SD card."""
+        region = self._region("boot")
+        if source.stat().st_size != region["length"]:
+            raise InstallerError("cannot back up a partial boot region")
+        backup_remote, metadata_remote = self._boot_backup_paths()
+        existing = self.run_dir / "boot-backup-existing.bin"
+        if self.adb.pull(backup_remote, existing, check=False) and existing.is_file():
+            if existing.stat().st_size != region["length"]:
+                raise InstallerError(
+                    "an existing vamanOS boot backup has the wrong size; "
+                    "it was not overwritten"
+                )
+            existing_digest = sha256_file(existing)
+            if existing_digest != digest:
+                raise InstallerError(
+                    "the SD card already contains a boot backup from another image; "
+                    "remove it only if it belongs to this handheld, then retry"
+                )
+            metadata = self.run_dir / "boot-before-vamanos.json"
+            write_json(
+                metadata,
+                {
+                    "sha256": digest,
+                    "length": region["length"],
+                    "offset": region["offset"],
+                    "created_by": "vamanOS live boot patcher",
+                },
+            )
+            self.adb.push(metadata, metadata_remote)
+            self.msg("  keeping the existing device boot backup")
+            return
+
+        parent = backup_remote.rsplit("/", 1)[0]
+        self.adb.shell_text(f"mkdir -p {shlex.quote(parent)}")
+        self.adb.push(source, backup_remote)
+        metadata = self.run_dir / "boot-before-vamanos.json"
+        write_json(
+            metadata,
+            {
+                "sha256": digest,
+                "length": region["length"],
+                "offset": region["offset"],
+                "created_by": "vamanOS live boot patcher",
+            },
+        )
+        self.adb.push(metadata, metadata_remote)
+        check = self.run_dir / "boot-backup-readback.bin"
+        if not self.adb.pull(backup_remote, check, check=False) or not check.is_file():
+            raise InstallerError("could not verify the device boot backup")
+        if check.stat().st_size != region["length"] or sha256_file(check) != digest:
+            raise InstallerError("device boot backup verification failed")
+        self.msg("  saved the original boot image on the SD card for restore")
+
+    def pull_boot_backup(self) -> Path:
+        """Pull and verify the per-device boot backup created before patching."""
+        region = self._region("boot")
+        backup_remote, metadata_remote = self._boot_backup_paths()
+        source = self.run_dir / "boot-restore-source.img"
+        metadata_path = self.run_dir / "boot-restore-source.json"
+        if not self.adb.pull(backup_remote, source, check=False) or not source.is_file():
+            raise InstallerError(
+                "no vamanOS boot backup was found on the SD card; restore is unavailable"
+            )
+        if not self.adb.pull(metadata_remote, metadata_path, check=False):
+            raise InstallerError("the vamanOS boot backup has no verification record")
+        try:
+            metadata = load_json(metadata_path)
+        except InstallerError as exc:
+            raise InstallerError("the vamanOS boot backup record is invalid") from exc
+        if (
+            metadata.get("length") != region["length"]
+            or metadata.get("offset") != region["offset"]
+            or not HEX_RE.fullmatch(str(metadata.get("sha256", "")))
+        ):
+            raise InstallerError("the vamanOS boot backup record does not match this profile")
+        if source.stat().st_size != region["length"]:
+            raise InstallerError("the vamanOS boot backup has the wrong size")
+        digest = sha256_file(source)
+        if digest != metadata["sha256"]:
+            raise InstallerError("the vamanOS boot backup checksum does not match its record")
+        return source
+
+    def build_live_patched_boot(self, source: Path, output: Path) -> str:
+        """Patch the captured image while retaining its exact kernel."""
+        return patch_boot_image_file(
+            source,
+            output,
+            self.art("find"),
+            self.payload_file("init_script"),
+            self.profile,
+        )
+
+    @staticmethod
+    def _boot_kernel(data: bytes, profile: dict) -> bytes:
+        """Return the kernel portion used to identify a boot-image family."""
+        layout = _boot_layout(data, region_length=profile["regions"]["boot"]["length"])
+        return data[layout["page"] : layout["ramdisk_offset"]]
+
+    def boot_image_variants(self) -> list:
+        variants = self.manifest.get("boot_image_variants", [])
+        if not isinstance(variants, list):
+            raise InstallerError("manifest boot_image_variants must be a list")
+        return variants
+
+    def validate_known_boot_images(self) -> None:
+        """Validate every shipped stock/patched pair before confirmation."""
+        region_length = self._region("boot")["length"]
+        for variant in self.boot_image_variants():
+            name = variant.get("name", "unnamed")
+            stock_key = variant.get("stock")
+            patched_key = variant.get("patched")
+            if not stock_key or not patched_key:
+                raise InstallerError(f"boot image variant {name} is incomplete")
+            stock = self.art(stock_key)
+            patched = self.art(patched_key)
+            if stock.stat().st_size != region_length or patched.stat().st_size != region_length:
+                raise InstallerError(
+                    f"boot image variant {name} does not contain exact {region_length}-byte images"
+                )
+            stock_data = stock.read_bytes()
+            patched_data = patched.read_bytes()
+            if self._boot_kernel(stock_data, self.profile) != self._boot_kernel(
+                patched_data, self.profile
+            ):
+                raise InstallerError(f"boot image variant {name} changes the kernel")
+            if self.classify_boot_image(stock) != "STOCK":
+                raise InstallerError(f"boot image variant {name} stock image is not stock")
+            if self.classify_boot_image(patched) != "PATCHED":
+                raise InstallerError(
+                    f"boot image variant {name} patched image is not recognized"
+                )
+
+    def select_known_boot_patch(
+        self, source: Path, original_digest: str
+    ) -> Optional[tuple]:
+        """Select a matching tested patched image, while preserving its kernel."""
+        source_data = source.read_bytes()
+        source_kernel = self._boot_kernel(source_data, self.profile)
+        for variant in self.boot_image_variants():
+            name = variant.get("name", "unnamed")
+            stock_key = variant.get("stock")
+            patched_key = variant.get("patched")
+            if not stock_key or not patched_key:
+                raise InstallerError(f"boot image variant {name} is incomplete")
+            stock = self.art(stock_key)
+            patched = self.art(patched_key)
+            stock_digest = sha256_file(stock)
+            patched_digest = sha256_file(patched)
+            if original_digest not in (stock_digest, patched_digest):
+                continue
+            if source_kernel != self._boot_kernel(stock.read_bytes(), self.profile):
+                raise InstallerError(
+                    f"boot image hash matched {name}, but its kernel does not match"
+                )
+            output_name = re.sub(r"[^A-Za-z0-9._-]+", "-", name.lower())
+            self.run_dir.mkdir(parents=True, exist_ok=True)
+            output = self.run_dir / f"boot-{output_name}-patched.img"
+            shutil.copy2(patched, output)
+            self.msg(
+                f"  boot image matches {name}; using the matching bundled patched image"
+            )
+            self.log(
+                f"known boot match: variant={name} original={original_digest} "
+                f"patched={patched_digest}"
+            )
+            return output, patched_digest, name
+        return None
+
+    def classify_boot_image(self, source: Path) -> str:
+        """Classify a captured boot image using its live adbd patch sites."""
+        try:
+            layout = _boot_layout(
+                source.read_bytes(), region_length=self._region("boot")["length"]
+            )
+            entries = _parse_newc(layout["cpio"])
+            adbd_path = self.profile.get("boot_patch", {}).get(
+                "adbd_path", "sbin/adbd"
+            )
+            adbd = next(body for name, _mode, body in entries if name == adbd_path)
+            patched = patch_adbd_bytes(
+                adbd,
+                self.profile.get("boot_patch", {}).get("adbd", DEFAULT_ADBD_PATCH),
+            )
+        except (InstallerError, StopIteration):
+            return "UNKNOWN"
+        return "PATCHED" if patched == adbd else "STOCK"
+
+    def prepare_live_boot_patch(self, via_runas: bool = False) -> tuple:
+        """Backward-compatible alias for the version-aware boot patcher."""
+        return self.prepare_boot_patch(via_runas=via_runas)
+
+    def prepare_boot_patch(self, via_runas: bool = False) -> tuple:
+        """Use a matching known image or safely patch the live image instead."""
+        source = self.run_dir / "boot-before-vamanos.img"
+        if via_runas:
+            digest = self.read_readback_via_runas("boot", source)
+        else:
+            digest = self.read_current_region("boot", source)
+        self.save_boot_backup(source, digest)
+
+        known = self.select_known_boot_patch(source, digest)
+        if known is not None:
+            return known[0], known[1]
+
+        self.msg("  boot image is not a known V10/V11/V12 image; patching it live")
+        output = self.run_dir / "boot-vamanos-patched.img"
+        patched_digest = self.build_live_patched_boot(source, output)
+        if patched_digest == digest:
+            raise InstallerError("live boot patch made no change; no boot image was written")
+        self.log(f"live boot fallback: original={digest} patched={patched_digest}")
+        return output, patched_digest
+
     # -- temp-root bootstrap (factory units) -------------------------------- #
     def _temproot_inputs(self) -> tuple:
         """Return the pinned Dirty COW helper paths."""
         return self.art("temproot_cowtest"), self.art("temproot_blockdump")
 
-    def bootstrap_temproot(self, boot_patched: Path) -> None:
-        """Use dirtycow to gain a one-shot root and write the patched boot."""
+    def bootstrap_temproot(self) -> None:
+        """Use dirtycow to gain a one-shot root and patch this device's boot."""
         if self.dry_run:
             self.msg("[dry-run] would run dirtycow temp-root bootstrap")
             return
@@ -1086,7 +1547,6 @@ class VamanOSInstaller:
         # step 1: push helpers + image
         self.adb.push(cowtest, "/data/local/tmp/cowtest")
         self.adb.push(blockdump, "/data/local/tmp/runas-blockdump")
-        self.adb.push(boot_patched, "/data/local/tmp/boot-patch.img")
         self.adb.shell_text(
             "chmod 755 /data/local/tmp/cowtest /data/local/tmp/runas-blockdump"
         )
@@ -1101,7 +1561,12 @@ class VamanOSInstaller:
                 "/data/local/tmp/cowtest /data/local/tmp/runas-blockdump /system/bin/run-as --no-pad"
             )
 
-            # step 3: write boot region via patched run-as
+            # step 3: capture the device boot region, then use the matching
+            # V10/V11/V12 image when possible or patch this image in memory.
+            patched, patched_digest = self.prepare_boot_patch(via_runas=True)
+            self.adb.push(patched, "/data/local/tmp/boot-patch.img")
+
+            # step 4: write boot region via patched run-as
             region = self._region("boot")
             hex_offset = hex(region["offset"])
             hex_len = hex(region["length"])
@@ -1110,13 +1575,13 @@ class VamanOSInstaller:
             )
             self.adb.shell_text("sync")
 
-            # step 4: read back and verify (through run-as, as in flash-boot-v1.sh)
+            # step 5: read back and verify (through run-as, as in flash-boot-v1.sh)
             digest = self.read_readback_via_runas(
                 "boot", self.run_dir / "boot-bootstrap-readback.bin"
             )
-            if digest != region["patched_sha256"]:
+            if digest != patched_digest:
                 raise InstallerError(
-                    f"boot readback after temp-root write mismatches patch: {digest}\n"
+                    f"boot readback after live patch mismatches patch: {digest}\n"
                     "Device is NOT rooted yet. The original run-as will be restored; do not reboot."
                 )
         finally:
@@ -1857,19 +2322,11 @@ class VamanOSInstaller:
         self.report_cpu()
         if self.known:
             if root:
-                boot = self.read_current_region(
-                    "boot", self.run_dir / "doctor-boot.bin"
-                )
-                state = (
-                    "STOCK"
-                    if boot == self.profile["regions"]["boot"]["stock_sha256"]
-                    else (
-                        "PATCHED (root)"
-                        if boot == self.profile["regions"]["boot"]["patched_sha256"]
-                        else "UNKNOWN"
-                    )
-                )
-                self.msg(f"Boot region:  {state} ({boot[:16]}…)")
+                boot_path = self.run_dir / "doctor-boot.bin"
+                boot = self.read_current_region("boot", boot_path)
+                state = self.classify_boot_image(boot_path)
+                self.msg(
+                    f"Boot region:  {state}{' (root ADB)' if state == 'PATCHED' else ''} ({boot[:16]}…)")
             else:
                 self.msg(
                     "Boot region:  unavailable without root ADB; install --boot-mode temproot will inspect it after bootstrap"
@@ -1896,17 +2353,11 @@ class VamanOSInstaller:
 
         if self.known:
             if boot_mode == "auto":
-                boot_state = pre.get("boot_sha256")
-                if boot_state == self.profile["regions"]["boot"]["patched_sha256"]:
-                    boot_mode = "skip"  # already rooted/patch installed
-                elif boot_state == self.profile["regions"]["boot"]["stock_sha256"]:
-                    boot_mode = "force" if root else "temproot"
-                elif boot_state is None and not root:
-                    # On a factory unit, the boot region is intentionally not
-                    # readable until Dirty COW has provided temporary root.
-                    boot_mode = "temproot"
-                else:
-                    raise InstallerError(f"unknown boot state: {boot_state}")
+                # Root ADB is already sufficient for the software install. Do
+                # not rewrite a boot image merely because its hash is not one
+                # of our reference images; different PS202 firmware revisions
+                # legitimately have different kernels.
+                boot_mode = "skip" if root else "temproot"
             if (
                 boot_mode in ("force", "temproot")
                 and not root
@@ -1936,9 +2387,9 @@ class VamanOSInstaller:
         # Plan
         self.msg("\n=== vamanOS install plan ===")
         plans = [
-            "1. Patch boot to root ADB (region 0x1D80000, 6 MiB)"
+            "1. Match V10/V11/V12 or patch this device's own boot image to root ADB (region 0x1D80000, 6 MiB)"
             if boot_mode in ("force", "temproot")
-            else "1. Boot already patched (skip)",
+            else "1. Root ADB already works; leave the boot image unchanged",
             "2. Install Android boot splash (/system/media/bootanimation.zip; no raw logo-region write)",
             "3. Install /system/xbin/su + /system/xbin/find (root)",
             "4. Deploy PS202 boot helper + performance profile (/data/local/)",
@@ -1961,13 +2412,24 @@ class VamanOSInstaller:
         # Firmware phase
         if self.known:
             if boot_mode == "temproot":
-                self.msg("[1/8] Boot patching via dirtycow temp-root...")
-                self.bootstrap_temproot(self.art("boot_patched"))
+                if root:
+                    self.msg("[1/8] Live patching the device boot image...")
+                    patched, patched_digest = self.prepare_boot_patch()
+                    self.write_region("boot", patched, {patched_digest})
+                    self.verify_readback("boot", patched_digest)
+                    self.adb.reboot()
+                    self.adb.wait_for_device(timeout=300)
+                    if not self.adb.is_root():
+                        raise InstallerError("root ADB is not active after boot reboot")
+                else:
+                    self.msg("[1/8] Boot patching via dirtycow temp-root...")
+                    self.bootstrap_temproot()
                 root = True
             elif boot_mode == "force":
-                self.msg("[1/8] Boot patching (root ADB)...")
-                self.write_region("boot", self.art("boot_patched"))
-                self.verify_readback("boot")
+                self.msg("[1/8] Live patching the device boot image...")
+                patched, patched_digest = self.prepare_boot_patch()
+                self.write_region("boot", patched, {patched_digest})
+                self.verify_readback("boot", patched_digest)
                 self.adb.reboot()
                 self.adb.wait_for_device(timeout=300)
                 if not self.adb.is_root():
@@ -2060,7 +2522,7 @@ class VamanOSInstaller:
             )
 
     def restore_boot(self, confirmed: Optional[str] = None) -> None:
-        """Restore the exact reviewed stock boot region on a rooted PS202."""
+        """Restore the exact boot region captured from this device."""
         self.run_dir.mkdir(parents=True, exist_ok=True)
         self.print_identity()
         if not self.known and not self.dry_run:
@@ -2070,44 +2532,42 @@ class VamanOSInstaller:
                 "stock boot restore needs root ADB. If Android cannot boot, this command cannot reach the device."
             )
 
-        current = (
-            self.read_current_region("boot", self.run_dir / "boot-before-restore.bin")
-            if not self.dry_run
-            else ""
-        )
-        stock_hash = self.profile["regions"]["boot"]["stock_sha256"]
-        patched_hash = self.profile["regions"]["boot"]["patched_sha256"]
-        if current == stock_hash:
-            self.msg("Stock boot is already installed; no changes were made.")
+        source = None if self.dry_run else self.pull_boot_backup()
+        current_path = self.run_dir / "boot-before-restore.bin"
+        current = "" if self.dry_run else self.read_current_region("boot", current_path)
+        source_digest = "" if source is None else sha256_file(source)
+        if current and current == source_digest:
+            self.msg("The original boot image is already installed; no changes were made.")
             return
-        if current and current != patched_hash:
+        if current and self.classify_boot_image(current_path) != "PATCHED":
             raise InstallerError(
-                f"refusing to restore an unknown boot image ({current[:16]}…). Only the reviewed vamanOS image may be replaced."
+                f"refusing to restore an unrecognized boot image ({current[:16]}…); "
+                "the device does not appear to be using the vamanOS live patch"
             )
 
         self.msg("\n=== Restore stock PS202 boot ===")
         self.msg(
-            "  Replace only the reviewed 6 MiB boot region with the bundled stock image"
+            "  Replace only the 6 MiB boot region with the backup captured from this handheld"
         )
         self.msg("  Verify the write by reading the entire region back")
         self.msg(
             "  Reboot into the original factory boot (root ADB will no longer be available)"
         )
         Confirmation.request(self.serial, confirmed, action="RESTORE")
-        source = self.art("boot_stock")
-        self.write_region("boot", source)
-        readback = self.read_current_region(
-            "boot", self.run_dir / "boot-restore-readback.bin"
-        )
-        if readback != stock_hash:
+        if source is None:
+            self.msg("[dry-run] would restore the device's saved boot image")
+            return
+        self.write_region("boot", source, {source_digest})
+        readback = self.verify_readback("boot", source_digest)
+        if readback != source_digest:
             raise InstallerError(
-                f"stock boot readback SHA-256 {readback} != expected {stock_hash}"
+                f"boot restore readback SHA-256 {readback} != expected {source_digest}"
             )
-        self.msg("Stock boot verified. Rebooting...")
+        self.msg("Original boot image verified. Rebooting...")
         self.adb.reboot()
         self.adb.wait_for_device(timeout=300)
         self.msg(
-            "Stock boot restored. The original factory ADB behavior is expected now."
+            "Original boot restored. The factory ADB behavior is expected now."
         )
 
     def log_path(self) -> Path:
@@ -2156,15 +2616,22 @@ class VamanOSInstaller:
             # cores
             for short, core in self.core_files().items():
                 shutil.copy2(core, bundle / "cores" / core.name)
-            # boot region images + Android userspace boot splash
-            for key, filename in (
-                ("boot_stock", "boot_stock.img"),
-                ("boot_patched", "boot_patched.img"),
-                ("android_bootanimation", "android_bootanimation.zip"),
-            ):
-                shutil.copy2(self.art(key), bundle / "boot" / filename)
+            # The Android userspace splash is bundled separately from the raw
+            # boot-image pairs. Known V10/V11/V12 pairs are bundled for exact
+            # full-image matches; unknown supported revisions use live patching.
+            shutil.copy2(
+                self.art("android_bootanimation"),
+                bundle / "boot" / "android_bootanimation.zip",
+            )
+            for variant in self.boot_image_variants():
+                for key in (variant["stock"], variant["patched"]):
+                    source = self.art(key)
+                    destination = bundle / Path(
+                        self.manifest["artifacts"][key]["bundle_path"]
+                    ).relative_to("payload")
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(source, destination)
             for key in (
-                "patched_adbd",
                 "find",
                 "su",
                 "temproot_cowtest",
@@ -2293,7 +2760,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     p_restore = sub.add_parser(
         "restore-boot",
         aliases=["rollback"],
-        help="restore the exact stock PS202 boot image",
+        help="restore the boot image saved from this handheld",
     )
     p_restore.add_argument("--confirm", help="non-interactive confirmation token")
     p_restore.set_defaults(func="restore_boot")

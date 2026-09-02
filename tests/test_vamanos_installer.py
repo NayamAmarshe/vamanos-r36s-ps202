@@ -97,6 +97,14 @@ class ManifestProfileTests(unittest.TestCase):
             self.assertFalse(any(name.startswith("es-theme-CODY-DARKTECK-main/") for name in names))
             self.assertIn(b"<formatVersion>7</formatVersion>", archive.read("theme.xml"))
 
+    def test_frontend_music_is_present_and_checksum_pinned(self):
+        artifact = MANIFEST["artifacts"]["frontend_music"]
+        root = (INSTALLER / artifact["source"]).resolve()
+        self.assertTrue(root.is_dir())
+        self.assertEqual(set(artifact["files"]), {path.name for path in root.glob("*.ogg")})
+        for name, expected in artifact["files"].items():
+            self.assertEqual(expected, inst.sha256_file(root / name))
+
     def test_boot_patched_hash_matches_reference_image(self):
         img = (ROOT / "ps202-project/firmware/boot-adbd-root-v2.img").resolve()
         if not img.is_file():
@@ -333,6 +341,39 @@ class CoreInstallTests(unittest.TestCase):
         )
 
 
+class FrontendMusicTests(unittest.TestCase):
+    def test_installs_missing_tracks_and_keeps_existing_tracks(self):
+        pushes = []
+        commands = []
+
+        class FakeAdb:
+            def shell_text(self, command, timeout=120, check=True):
+                commands.append(command)
+                if command.startswith("if test -f"):
+                    return "installed"
+                return "done"
+
+            def push(self, local, remote, timeout=600):
+                pushes.append((Path(local), remote))
+
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "menu.ogg"
+            source.write_bytes(b"music")
+            installer = inst.VamanOSInstaller.__new__(inst.VamanOSInstaller)
+            installer.manifest = {"artifacts": {"frontend_music": {
+                "device_path": "/storage/sdcard1/music",
+                "files": {"menu.ogg": inst.sha256_file(source)},
+            }}}
+            installer.frontend_music_files = lambda: {"menu.ogg": source}
+            installer.adb = FakeAdb()
+            installer.dry_run = False
+            installer.msg = lambda *args, **kwargs: None
+            installer.install_frontend_music()
+
+        self.assertEqual([(source, "/data/local/tmp/vamanos-music-0.ogg")], pushes)
+        self.assertIn("/storage/sdcard1/music/menu.ogg", commands[1])
+
+
 class AndroidBootSplashTests(unittest.TestCase):
     def test_splash_only_command_never_enters_boot_region_flow(self):
         calls = []
@@ -457,6 +498,7 @@ class FactoryTemprootTests(unittest.TestCase):
         payloads = []
         installer = inst.VamanOSInstaller.__new__(inst.VamanOSInstaller)
         installer.art = lambda key: resolved.append(key) or Path("/tmp/" + key)
+        installer.frontend_music_files = lambda: {"menu.ogg": Path("/tmp/menu.ogg")}
         installer.core_files = lambda: {"fceumm": Path("/tmp/fceumm.so")}
         installer.payload_file = lambda key: payloads.append(key) or Path("/tmp/" + key)
 
@@ -474,6 +516,7 @@ class FactoryTemprootTests(unittest.TestCase):
         resolved = []
         installer = inst.VamanOSInstaller.__new__(inst.VamanOSInstaller)
         installer.art = lambda key: resolved.append(key) or Path("/tmp/" + key)
+        installer.frontend_music_files = lambda: {"menu.ogg": Path("/tmp/menu.ogg")}
         installer.core_files = lambda: {"fceumm": Path("/tmp/fceumm.so")}
         installer.payload_file = lambda key: Path("/tmp/" + key)
 

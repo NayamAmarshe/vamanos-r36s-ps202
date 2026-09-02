@@ -87,6 +87,24 @@
       "device_path": "/storage/sdcard1/ps202/themes/EPIC-CODY.zip",
       "sha256": "b899d6ef9af5afc44b364d809f09362936f12fe51bdeb5c3f5f5dfe91a38155b",
       "format_version": 7
+    },
+    "frontend_music": {
+      "source": "release-inputs/music",
+      "device_path": "/storage/sdcard1/music",
+      "files": {
+        "Bolt Action - Better Believe (Instrumental Mix).ogg": "da8b3ce79f073b3c68854875ba047cad5b7c3bd5e629c8818c9f06ddc9175228",
+        "Bolt Action - Give Me.ogg": "944b182646ac74ada4d9604c8a5356a558b8e6fdf51b7a59abfd60986d3ac26e",
+        "Bolt Action - Human Music (Instrumental Mix).ogg": "98d09893ac6c6085779c823bac79670e8cfe2c008118f3da07610d34b05e83df",
+        "Bolt Action - Retro Playground.ogg": "c6a3cf701bbce9822b3eef4c54c0428d51810abd181d4504b988829438f53b85",
+        "Bolt Action - Some Potential.ogg": "76b6e14a1c360b3851b6786a266348e9a125ff5f363cb04783d8aa38c9b0c530",
+        "Bolt Action - Who You Are.ogg": "01db96b6e240e1eec1c743c8fc934fde50152d1f017c7d050dbd434c9877367e",
+        "Bolt Action - vapormall.ogg": "275940b92ce2a762a34db824f4b27bcf7ef4f6ef15419308d16e20d9d3b02c6f",
+        "Nihilore - Endless Blue.ogg": "583161d3c0bf9dd5cf4667024505e3cf4de1e735a8f5d15e3c4907db9b258e33",
+        "Nihilore - Motion Blur.ogg": "02316058079e57492cdd5bff3d39d46c7e924055ffe2c0887a6dfcf0bb036754",
+        "Nihilore - Our Ships Line The Ocean Floor.ogg": "fb0aeebd3b7819b039c752649a8a3716fcda1092b0236281e5f8b8fb7e2dddc8",
+        "Nihilore - Sparkwood & 21.ogg": "06d4ec0d05a6f16f83d84f4f1236273000469c53b092466d6d04c3fb675e5837",
+        "Nihilore - The Bright Lights of Summer.ogg": "294a1961c98b3556522d13641a0039ec51d95db2e36569a40736196f88a48127"
+      }
     }
   },
   "cores": {

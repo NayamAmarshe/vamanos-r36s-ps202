@@ -459,12 +459,13 @@ class VamanOSInstaller:
             "boot_patched": "payload/boot/boot_patched.img",
             "android_bootanimation": "payload/boot/android_bootanimation.zip",
             "cody_theme": "payload/themes/EPIC-CODY.zip",
+            "frontend_music": "payload/music",
         }
         rel = mapping.get(key)
         if not rel:
             return None
         candidate = self.bundle_root / rel
-        return candidate if candidate.is_file() else None
+        return candidate if candidate.is_file() or candidate.is_dir() else None
 
     def _download_artifact(self, key: str, spec: dict, target: Path) -> None:
         """Download a pinned artifact into a local cache and verify it later."""
@@ -532,6 +533,36 @@ class VamanOSInstaller:
                 raise InstallerError(f"SHA-256 mismatch for {key}: {source}\n  expected {expected}\n  actual   {actual}")
         return source
 
+    def frontend_music_files(self) -> Dict[str, Path]:
+        """Resolve and verify the checksum-pinned frontend music directory."""
+        spec = self.manifest["artifacts"]["frontend_music"]
+        bundled = self._bundle_artifact("frontend_music")
+        if bundled is not None:
+            root = bundled
+        else:
+            root = resolve_path(spec["source"], INSTALLER_DIR)
+        if not root.is_dir():
+            raise InstallerError(f"frontend music directory missing: {root}")
+
+        files = spec.get("files", {})
+        if not isinstance(files, dict) or not files:
+            raise InstallerError("frontend music manifest has no files")
+        resolved: Dict[str, Path] = {}
+        for name, expected in files.items():
+            relative = Path(name)
+            if relative.is_absolute() or relative.name != name:
+                raise InstallerError(f"unsafe frontend music filename: {name}")
+            source = root / relative
+            if not source.is_file():
+                raise InstallerError(f"frontend music file missing: {source}")
+            actual = sha256_file(source)
+            if actual != expected:
+                raise InstallerError(
+                    f"SHA-256 mismatch for frontend music {name}:\n"
+                    f"  expected {expected}\n  actual   {actual}")
+            resolved[name] = source
+        return resolved
+
     def payload_file(self, key: str) -> Path:
         """Resolve a non-hashed payload file from a workspace or bundle."""
         try:
@@ -587,6 +618,7 @@ class VamanOSInstaller:
             required.extend(("temproot_cowtest", "temproot_blockdump"))
         for key in required:
             self.art(key)
+        self.frontend_music_files()
         self.core_files()
         for key in ("boot_helper", "performance_profile", "launcher_config", "retroarch_baseline"):
             self.payload_file(key)
@@ -905,6 +937,47 @@ class VamanOSInstaller:
             raise InstallerError("V2 CODY theme archive is staged but EPIC-CODY did not activate")
         return active
 
+    def install_frontend_music(self) -> None:
+        """Install missing Batocera frontend music without removing user tracks."""
+        spec = self.manifest["artifacts"]["frontend_music"]
+        files = self.frontend_music_files()
+        target_root = spec["device_path"]
+        if self.dry_run:
+            self.msg(f"[dry-run] install frontend music in {target_root}")
+            return
+
+        target_root_q = shlex.quote(target_root)
+        self.adb.shell_text(f"mkdir -p {target_root_q}")
+        installed = 0
+        kept = 0
+        for index, (name, source) in enumerate(files.items()):
+            remote = f"/data/local/tmp/vamanos-music-{index}.ogg"
+            target = f"{target_root}/{name}"
+            target_q = shlex.quote(target)
+            remote_q = shlex.quote(remote)
+            self.adb.push(source, remote)
+            state = self.adb.shell_text(
+                f"if test -f {target_q}; then echo existing; "
+                f"elif cp -f {remote_q} {target_q}; then echo installed; "
+                f"else echo failed; fi; rm -f {remote_q}; sync",
+                check=False,
+            )
+            if state.endswith("installed"):
+                installed += 1
+            elif state.endswith("existing"):
+                kept += 1
+            else:
+                raise InstallerError(f"could not install frontend music: {target}")
+        self.msg(f"  frontend music: {installed} copied, {kept} existing files kept")
+
+    def verify_frontend_music(self) -> None:
+        """Confirm every bundled frontend track exists on the SD card."""
+        spec = self.manifest["artifacts"]["frontend_music"]
+        for name in spec.get("files", {}):
+            target = shlex.quote(f"{spec['device_path']}/{name}")
+            if not self.adb.shell_text(f"test -f {target} && echo yes", check=False).endswith("yes"):
+                raise InstallerError(f"frontend music is missing: {spec['device_path']}/{name}")
+
     def install_retroarch_config(self, baseline: Path) -> None:
         """Merge the baseline cfg into the running shared config, preserving user bindings."""
         cfg_path = "/storage/sdcard0/Android/data/com.retroarch.ra32/files/retroarch.cfg"
@@ -1072,6 +1145,7 @@ class VamanOSInstaller:
                     raise InstallerError(f"{key} binary is missing at {bin_path}")
             self.verify_private_cores(self.core_files())
             self.verify_preserved_system_files()
+            self.verify_frontend_music()
         self.ensure_sd_layout()
         self.adb.shell("am start -n com.ps202.emulationstation/.PS202HomeActivity", check=False)
         time.sleep(3)
@@ -1193,7 +1267,7 @@ class VamanOSInstaller:
             ("5. Install ES + RetroArch; keep the existing PPSSPP app"
              if ppsspp_present is True else
              "5. Install ES + RetroArch; install bundled PPSSPP only if missing"),
-            "6. Install RetroArch cores + V2 CODY theme + tune shared config (preserves input bindings)",
+            "6. Install RetroArch cores + menu music + V2 CODY theme + tune shared config (preserves input bindings)",
             "7. Back up removable apps, deploy launcher map + PS202 SD layout",
             "8. Remove old apps/game launcher + set ES as HOME",
         ]
@@ -1239,6 +1313,7 @@ class VamanOSInstaller:
         self.msg("[6/8] Installing cores + config...")
         self.ensure_sd_layout()
         self.install_cores(self.core_files())
+        self.install_frontend_music()
         self.install_cody_theme()
         self.install_retroarch_config(self.payload_file("retroarch_baseline"))
         self.msg("[7/8] Deploying launch map + layout...")
@@ -1295,6 +1370,7 @@ class VamanOSInstaller:
             (bundle / "cores").mkdir(parents=True)
             (bundle / "boot").mkdir(parents=True)
             (bundle / "bin").mkdir(parents=True)
+            (bundle / "music").mkdir(parents=True)
             (bundle / "themes").mkdir(parents=True)
             # APKs
             for key in ("emulationstation", "ppsspp"):
@@ -1311,6 +1387,8 @@ class VamanOSInstaller:
             for key in ("patched_adbd", "find", "su", "temproot_cowtest", "temproot_blockdump"):
                 source = self.art(key)
                 shutil.copy2(source, bundle / "bin" / source.name)
+            for name, source in self.frontend_music_files().items():
+                shutil.copy2(source, bundle / "music" / name)
             shutil.copy2(self.art("cody_theme"), bundle / "themes" / "EPIC-CODY.zip")
             # payload configs
             for name in ("ps202-init.sh", "retroarch-baseline.cfg", "android_launchers.xml"):

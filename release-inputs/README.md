@@ -31,8 +31,10 @@ PPSSPP and uses this bundled copy only as a fallback when PPSSPP is missing.
   comparison, but do not put them ahead of `cores-api19/` in the manifest.
 - `themes/EPIC-CODY.zip` — the pinned V2 format-7 CODY theme archive staged by
   the installer at `/storage/sdcard1/ps202/themes/EPIC-CODY.zip`.
+- `music/` — the 12 menu music tracks used by the frontend, copied to
+  `/storage/sdcard1/music` when a track is missing.
 - `touchbridge/cowtest`, `touchbridge/runas-blockdump`, and
-  `touchbridge/run-as-original` — optional private inputs for the temp-root
+  `touchbridge/run-as-original` — optional inputs for the temp-root
   bootstrap on a virgin, non-root factory unit. Pinned default copies now ship
   in `../payload/bin/`; these files can override them only when their hashes
   match the manifest.

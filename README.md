@@ -17,10 +17,14 @@ The supported device shows:
 - Model: `PS202`
 - Build: `PS202_00001`
 - Android: `4.4.2`
+- Processor: MediaTek `MT6572`
 - Screen: landscape `640 × 480`
+- Built-in wireless: Wi-Fi and Bluetooth
 
 The installer checks the device before it starts. It is not for other R36S
 models or other handhelds.
+
+If this looks like your device, you’re good to go!
 
 This guide is for beginners. It shows how to install vamanOS on an **R36S
 PS202** handheld.

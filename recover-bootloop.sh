@@ -107,7 +107,7 @@ doctor() {
   # leftover tool scripts / power mailbox
   log "tool scripts under /storage/sdcard1/ps202/tools: (if any)"
   txt 'ls -la /storage/sdcard1/ps202/tools 2>/dev/null' | log_stdin
-  log "ES power mailbox present:         $(txt 'test -f /data/data/com.ps202.emulationstation/files/ps202-power.request && echo yes || echo no')"
+  log "ES power mailbox present:         $(txt 'test -f /data/data/com.ps202.nayamamarshe.emulationstation/files/ps202-power.request && echo yes || echo no')"
 
   # keylayout
   log "mtk-kpd.kl key 316 line (should end in BTN_MODE on stock):"

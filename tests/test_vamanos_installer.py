@@ -26,7 +26,7 @@ class HomeTests(unittest.TestCase):
                 return inst.CommandResult(
                     0,
                     "Starting: Intent { cat=[android.intent.category.HOME] }\n"
-                    "Activity: com.ps202.emulationstation/.PS202HomeActivity\n",
+                    "Activity: com.ps202.nayamamarshe.emulationstation/.PS202HomeActivity\n",
                     "",
                 )
 
@@ -291,6 +291,12 @@ class ManifestProfileTests(unittest.TestCase):
 
     def test_shell_is_not_an_installer_artifact_and_emulator_is_protected(self):
         self.assertNotIn("shell", MANIFEST["artifacts"])
+        self.assertIn(
+            "com.ps202.emulationstation", PROFILE["debloat"]["remove"]
+        )
+        self.assertNotIn(
+            "com.ps202.emulationstation", PROFILE["debloat"]["protected"]
+        )
         self.assertIn("com.ps202.shell", PROFILE["debloat"]["remove"])
         self.assertIn("com.xugame.gameconsoleMenu", PROFILE["debloat"]["remove"])
         self.assertNotIn("com.xugame.gameconsole", PROFILE["debloat"]["remove"])
@@ -328,6 +334,10 @@ class ManifestProfileTests(unittest.TestCase):
         layout = set(MANIFEST["sd_layout"])
         self.assertIn("roms/CPS1", layout)
         self.assertIn("roms/COLECOVISION", layout)
+        self.assertIn(
+            "Android/data/com.ps202.nayamamarshe.emulationstation/files/themes",
+            layout,
+        )
         self.assertNotIn("ps202/roms/nes", layout)
 
     def test_api19_core_source_precedes_newer_buildbot_inputs(self):
@@ -345,7 +355,7 @@ class ManifestProfileTests(unittest.TestCase):
             "com.android.systemui",
             "com.android.phone",
             "com.android.bluetooth",
-            "com.ps202.emulationstation",
+            "com.ps202.nayamamarshe.emulationstation",
             "com.retroarch.ra32",
             "org.ppsspp.ppsspp",
         ):

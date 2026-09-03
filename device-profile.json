@@ -62,6 +62,7 @@
       "com.rock.gota"
     ],
     "remove": [
+      "com.ps202.emulationstation",
       "com.ps202.shell",
       "com.digdroid.alman.dig",
       "com.estrongs.android.pop",
@@ -83,7 +84,7 @@
       "com.mediatek.batterywarning",
       "com.mediatek.bluetooth",
       "com.mediatek.thermalmanager",
-      "com.ps202.emulationstation",
+      "com.ps202.nayamamarshe.emulationstation",
       "com.xugame.gameconsole",
       "com.retroarch.ra32",
       "org.ppsspp.ppsspp"

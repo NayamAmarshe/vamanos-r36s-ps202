@@ -82,7 +82,7 @@ VAMANOS_BANNER = r"""
 RADIR_SD = "/storage/sdcard1/retroarch/cores"
 RADIR_PRIVATE = "/data/data/com.retroarch.ra32/cores"
 PPSSPP_PACKAGE = "org.ppsspp.ppsspp"
-ES_HOME_COMPONENT = "com.ps202.emulationstation/.PS202HomeActivity"
+ES_HOME_COMPONENT = "com.ps202.nayamamarshe.emulationstation/.PS202HomeActivity"
 HOME_INTENT = (
     "am start -W -a android.intent.action.MAIN "
     "-c android.intent.category.HOME -f 0x10000000"
@@ -2205,7 +2205,7 @@ class VamanOSInstaller:
         log_paths = (
             ("/storage/sdcard1/ps202/logs/v2-bootstrap.log", "v2-bootstrap-sd"),
             (
-                "/data/data/com.ps202.emulationstation/files/v2-bootstrap.log",
+                "/data/data/com.ps202.nayamamarshe.emulationstation/files/v2-bootstrap.log",
                 "v2-bootstrap-private",
             ),
         )
@@ -2214,7 +2214,7 @@ class VamanOSInstaller:
             for remote, name in log_paths
         }
         self.adb.shell(
-            "am start -n com.ps202.emulationstation/.PS202HomeActivity", check=False
+            "am start -n com.ps202.nayamamarshe.emulationstation/.PS202HomeActivity", check=False
         )
         deadline = time.time() + timeout
         while time.time() < deadline:
@@ -2256,7 +2256,7 @@ class VamanOSInstaller:
         if require_root and not self.adb.is_root():
             raise InstallerError("post-install ADB is not root")
         for package in (
-            "com.ps202.emulationstation",
+            "com.ps202.nayamamarshe.emulationstation",
             "com.retroarch.ra32",
             "org.ppsspp.ppsspp",
         ):
@@ -2310,7 +2310,7 @@ class VamanOSInstaller:
         act = self.adb.shell_text(
             "dumpsys activity activities", timeout=30, check=False
         )
-        if "com.ps202.emulationstation" not in act:
+        if "com.ps202.nayamamarshe.emulationstation" not in act:
             raise InstallerError(
                 "EmulationStation is not present in the activity dump after launch"
             )

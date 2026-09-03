@@ -4,7 +4,7 @@ vamanOS is made by **Nayam Amarshe** for the R36S PS202 / TICHIPS handheld.
 
 This release includes or uses:
 
-- Batocera EmulationStation V2, packaged as `com.ps202.emulationstation`.
+- Batocera EmulationStation V2, packaged as `com.ps202.nayamamarshe.emulationstation`.
 - RetroArch `1.20.0_GIT` for Android 4.4.2/API 19, downloaded from the
   official Libretro build server during installation.
 - PPSSPP for Android, used as the PSP player when the factory PPSSPP app is

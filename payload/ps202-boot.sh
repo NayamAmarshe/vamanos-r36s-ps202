@@ -149,6 +149,7 @@ if [ -d /storage/sdcard1 ]; then
     roms/gba roms/gbc roms/genesis roms/megadrive roms/mame roms/ngpc \
     roms/nes roms/pcengine roms/psp roms/psx roms/snes roms/wonder \
     ps202/saves ps202/states ps202/screenshots ps202/themes \
+    Android/data/com.ps202.nayamamarshe.emulationstation/files/themes \
     ps202/media/images ps202/media/videos ps202/configs ps202/logs \
     ps202/cache ps202/cache/roms; do
     mkdir -p "/storage/sdcard1/$d"
@@ -170,7 +171,7 @@ fi
 } > /data/local/data-usage.txt 2>&1
 # --- ES power mailbox (fixed actions only) ---
 (
-  ESPRIV=/data/data/com.ps202.emulationstation/files
+  ESPRIV=/data/data/com.ps202.nayamamarshe.emulationstation/files
   ESCMD=$ESPRIV/ps202-power.request
   while true; do
     if [ -f "$ESCMD" ]; then

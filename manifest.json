@@ -13,8 +13,8 @@
   "artifacts": {
     "emulationstation": {
       "source": "release-inputs/apks/emulationstation.apk",
-      "package": "com.ps202.emulationstation",
-      "sha256": "77510d0e3d16116c1e51037e250d755ed1190316967fe13d60602f004eb8658a"
+      "package": "com.ps202.nayamamarshe.emulationstation",
+      "sha256": "459c57c333a9e2f44aa2a630c469775d64f4e9f9ab861d0a3677b4aef7e6cf43"
     },
     "retroarch": {
       "download": "downloads/retroarch-ra32-1.20.0.apk",
@@ -162,10 +162,28 @@
     "mednafen_wswan": "434948831287bb274b8eca4e9c85ed8308b04c18de220d2e4f91fd15ade5d395"
   },
   "supported_systems": [
-    "colecovision", "cps1", "cps2", "cps3", "sms", "arcade",
-    "atari2600", "atarilynx", "gamegear", "gb", "gba", "gbc",
-    "genesis", "megadrive", "mame", "ngpc", "nes", "pcengine",
-    "psp", "psx", "snes", "wonder"
+    "colecovision",
+    "cps1",
+    "cps2",
+    "cps3",
+    "sms",
+    "arcade",
+    "atari2600",
+    "atarilynx",
+    "gamegear",
+    "gb",
+    "gba",
+    "gbc",
+    "genesis",
+    "megadrive",
+    "mame",
+    "ngpc",
+    "nes",
+    "pcengine",
+    "psp",
+    "psx",
+    "snes",
+    "wonder"
   ],
   "core_sources": [
     "release-inputs/cores-api19",
@@ -200,6 +218,7 @@
     "ps202/states",
     "ps202/screenshots",
     "ps202/themes",
+    "Android/data/com.ps202.nayamamarshe.emulationstation/files/themes",
     "ps202/media/images",
     "ps202/media/videos",
     "ps202/configs",

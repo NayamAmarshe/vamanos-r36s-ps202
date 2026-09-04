@@ -71,11 +71,67 @@ and press Enter. This is the final yes before installation begins.
 Keep the cable connected until the installer says it is finished. The
 handheld reboots at the end to start vamanOS correctly.
 
+## Update the installer
+
+After the first release has been unzipped, you can update the installer code
+without downloading and extracting another release bundle. The updater fetches
+the small installer source and payload files from the repository's `main`
+branch, then runs the normal install flow using the APKs, cores, boot images,
+and other large artifacts already in the current folder.
+
+### macOS or Linux
+
+```bash
+./install.sh update
+```
+
+### Windows PowerShell
+
+```powershell
+.\install.ps1 update
+```
+
+### Windows Command Prompt
+
+```bat
+install.cmd update
+```
+
+Internet access is required for the update. The command must be run inside an
+extracted, self-contained release bundle. It still shows the normal
+`INSTALL-...` confirmation before changing the handheld. If a future update
+requires files that are not in the current bundle and cannot be downloaded by
+the installer, it will stop and report the missing file rather than silently
+mixing releases.
+
 On a factory device, the installer reads the boot image already on that
 handheld and saves it to the SD card first. It knows the V10 boot image and
 the identical V11/V12 boot image. When one matches exactly, it uses the
 matching bundled patched image. If a supported PS202 has another boot image,
 the installer patches that image itself so its kernel stays unchanged.
+
+## Repair controller input on an existing install
+
+EmulationStation and RetroArch have separate controller maps. If the menus
+work but games accept only ABXY, and RetroArch reports `mtk-kpd` as
+“not configured”, install the verified PS202 RetroArch profile onto the SD
+card. This does not touch `es_input.cfg`, ROMs, saves, or the system keylayout.
+
+From the extracted installer directory on macOS or Linux:
+
+```bash
+mkdir -p controller-backup
+adb pull /storage/sdcard1/retroarch/autoconfig/mtk-kpd.cfg \
+  controller-backup/mtk-kpd.cfg.before 2>/dev/null || true
+adb shell "mkdir -p /storage/sdcard1/retroarch/autoconfig"
+adb push payload/mtk-kpd.cfg \
+  /storage/sdcard1/retroarch/autoconfig/mtk-kpd.cfg
+```
+
+Restart RetroArch (a single reboot is sufficient), then launch a game again.
+Do not delete the EmulationStation input file or run the ES input wizard for
+this problem; those controls already working in the menus prove that the ES
+map is separate from the missing RetroArch profile.
 
 ## Put games on the SD card
 

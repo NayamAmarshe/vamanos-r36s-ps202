@@ -87,6 +87,25 @@ class ManifestProfileTests(unittest.TestCase):
         self.assertIn('audio_driver = "opensl"', helper)
         self.assertIn("audio_driver\\ =\\ *)", helper)
 
+    def test_retroarch_autoconfig_binds_verified_mtk_kpd_profile(self):
+        profile_path = INSTALLER / MANIFEST["payload"]["retroarch_autoconfig"]
+        profile = inst.parse_cfg(profile_path.read_text(encoding="utf-8"))
+        self.assertEqual('"android"', profile["input_driver"])
+        self.assertEqual('"mtk-kpd"', profile["input_device"])
+        for key, value in {
+            "input_up_btn": '"19"',
+            "input_down_btn": '"20"',
+            "input_left_btn": '"21"',
+            "input_right_btn": '"22"',
+            "input_select_btn": '"109"',
+            "input_start_btn": '"108"',
+            "input_l_x_plus_axis": '"+0"',
+            "input_l_y_plus_axis": '"+1"',
+            "input_r_x_plus_axis": '"+2"',
+            "input_r_y_plus_axis": '"+3"',
+        }.items():
+            self.assertEqual(value, profile[key], key)
+
     def test_boot_region_offsets_are_exact(self):
         boot = PROFILE["regions"]["boot"]
         self.assertEqual(0x01D80000, boot["offset"])  # 30932992 bytes = 60416 sectors
@@ -503,6 +522,105 @@ class BundleTests(unittest.TestCase):
             self.assertEqual(root.resolve(), inst.discover_bundle_root(root))
 
 
+class UpdateTests(unittest.TestCase):
+    def test_update_parser_defaults_to_main_and_auto_boot_mode(self):
+        args = inst._build_arg_parser().parse_args(["update"])
+        self.assertEqual("update", args.func)
+        self.assertEqual(inst.UPDATE_REF, args.ref)
+        self.assertEqual("auto", args.boot_mode)
+        self.assertFalse(args.legacy_temproot)
+
+    def test_update_api_url_quotes_ref_and_nested_path(self):
+        self.assertEqual(
+            "https://api.github.com/repos/NayamAmarshe/vamanos-r36s-ps202/"
+            "contents/payload/bin?ref=release%2F2026",
+            inst._update_api_url("payload/bin", "release/2026"),
+        )
+
+    def test_updated_install_command_forwards_global_and_install_options(self):
+        args = inst._build_arg_parser().parse_args(
+            [
+                "--adb",
+                "/opt/android/adb",
+                "--serial",
+                "PS202-1234",
+                "--dry-run",
+                "--quiet",
+                "update",
+                "--boot-mode",
+                "skip",
+                "--confirm",
+                "INSTALL-1234",
+            ]
+        )
+        command = inst._updated_install_command(
+            args, Path("/tmp/latest/vamanos_installer.py"), Path("/tmp/bundle")
+        )
+        self.assertEqual(
+            [
+                sys.executable,
+                "/tmp/latest/vamanos_installer.py",
+                "--bundle",
+                "/tmp/bundle",
+                "--adb",
+                "/opt/android/adb",
+                "--serial",
+                "PS202-1234",
+                "--dry-run",
+                "--quiet",
+                "install",
+                "--boot-mode",
+                "skip",
+                "--confirm",
+                "INSTALL-1234",
+            ],
+            command,
+        )
+
+    def test_update_reuses_current_bundle_and_cleans_temporary_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            bundle = Path(directory) / "bundle"
+            for relative in (
+                "manifest.json",
+                "device-profile.json",
+                "vamanos_installer.py",
+                "payload/apks/emulationstation.apk",
+                "bundle-sha256.json",
+            ):
+                target = bundle / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(b"x")
+
+            args = inst._build_arg_parser().parse_args(
+                ["--bundle", str(bundle), "update"]
+            )
+            temporary_source = {}
+
+            def write_update(_files, root):
+                temporary_source["root"] = root.parent
+                (root / "vamanos_installer.py").write_text(
+                    "print('latest')\n", encoding="utf-8"
+                )
+                (root / "manifest.json").write_text(
+                    '{"manifest_version": "latest"}\n', encoding="utf-8"
+                )
+                (root / "device-profile.json").write_text(
+                    '{"id": "PS202_00001"}\n', encoding="utf-8"
+                )
+
+            child_result = type("ChildResult", (), {"returncode": 7})()
+            with patch.object(inst, "_collect_update_files", return_value={}), patch.object(
+                inst, "_download_update_files", side_effect=write_update
+            ), patch.object(inst.subprocess, "run", return_value=child_result) as run:
+                self.assertEqual(7, inst.update_and_install(args))
+
+            command = run.call_args[0][0]
+            self.assertIn("--bundle", command)
+            self.assertEqual(str(bundle.resolve()), command[command.index("--bundle") + 1])
+            self.assertEqual("install", command[-1])
+            self.assertFalse(temporary_source["root"].exists())
+
+
 class DownloadTests(unittest.TestCase):
     def test_downloads_retroarch_to_cache_and_checks_hash(self):
         data = b"known-good-retroarch-apk"
@@ -867,6 +985,7 @@ class FactoryTemprootTests(unittest.TestCase):
                 "performance_profile",
                 "launcher_config",
                 "retroarch_baseline",
+                "retroarch_autoconfig",
             },
             set(payloads),
         )

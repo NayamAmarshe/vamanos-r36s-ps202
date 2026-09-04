@@ -53,6 +53,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 from urllib.error import URLError
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 INSTALLER_DIR = Path(__file__).resolve().parent
@@ -64,6 +65,23 @@ HEX_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 CONFIRM_RE = re.compile(r"^[a-zA-Z0-9]{4,40}$")
 MIN_SD_FREE_BYTES = 32 * 1024 * 1024
 INSTALL_TEMP_MARGIN_BYTES = 32 * 1024 * 1024
+UPDATE_REPOSITORY = "NayamAmarshe/vamanos-r36s-ps202"
+UPDATE_REF = "main"
+UPDATE_API_ROOT = f"https://api.github.com/repos/{UPDATE_REPOSITORY}/contents"
+UPDATE_ROOT_FILES = {
+    "vamanos_installer.py",
+    "manifest.json",
+    "device-profile.json",
+    "README.md",
+    "ADB-SETUP.md",
+    "install.sh",
+    "install.ps1",
+    "install.cmd",
+    "recover-bootloop.sh",
+    "AGENTS.md",
+    "CREDITS.md",
+}
+UPDATE_MAX_FILE_BYTES = 32 * 1024 * 1024
 
 VAMANOS_BANNER = r"""
                                                     
@@ -80,7 +98,9 @@ VAMANOS_BANNER = r"""
 # RetroArch (see EmulationStationActivity.buildIntent), so we only rely on the
 # launcher XML for ROM + LIBRETRO + the PSP shortcut.
 RADIR_SD = "/storage/sdcard1/retroarch/cores"
+RADIR_AUTOCONFIG = "/storage/sdcard1/retroarch/autoconfig"
 RADIR_PRIVATE = "/data/data/com.retroarch.ra32/cores"
+PS202_AUTOCONFIG_NAME = "mtk-kpd.cfg"
 PPSSPP_PACKAGE = "org.ppsspp.ppsspp"
 ES_HOME_COMPONENT = "com.ps202.nayamamarshe.emulationstation/.PS202HomeActivity"
 HOME_INTENT = (
@@ -126,6 +146,189 @@ def write_json(path: Path, value: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as stream:
         json.dump(value, stream, indent=2, sort_keys=True)
+
+
+def _update_api_url(relative: str, ref: str) -> str:
+    encoded = "/".join(quote(part, safe="") for part in relative.split("/") if part)
+    suffix = f"/{encoded}" if encoded else ""
+    return f"{UPDATE_API_ROOT}{suffix}?ref={quote(ref, safe='')}"
+
+
+def _fetch_update_bytes(url: str, maximum: int = UPDATE_MAX_FILE_BYTES) -> bytes:
+    request = Request(
+        url,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "vamanOS-installer-update/1",
+        },
+    )
+    with urlopen(request, timeout=60) as response:
+        content_length = response.headers.get("Content-Length")
+        if content_length and content_length.isdigit() and int(content_length) > maximum:
+            raise InstallerError(
+                f"update file is too large ({content_length} bytes): {url}"
+            )
+        data = bytearray()
+        while True:
+            chunk = response.read(1 << 20)
+            if not chunk:
+                break
+            data.extend(chunk)
+            if len(data) > maximum:
+                raise InstallerError(f"update file is too large: {url}")
+        return bytes(data)
+
+
+def _fetch_update_json(url: str) -> object:
+    try:
+        return json.loads(_fetch_update_bytes(url).decode("utf-8"))
+    except (UnicodeError, ValueError) as exc:
+        raise InstallerError(f"GitHub returned invalid update metadata: {url}: {exc}") from exc
+
+
+def _update_relative_path(repository_path: str) -> str:
+    relative = repository_path
+    path = Path(relative)
+    if not relative or path.is_absolute() or ".." in path.parts:
+        raise InstallerError(f"unsafe installer update path: {repository_path}")
+    return path.as_posix()
+
+
+def _collect_update_files(ref: str) -> Dict[str, str]:
+    """Return small installer source files without downloading release artifacts."""
+    root = _fetch_update_json(_update_api_url("", ref))
+    if not isinstance(root, list):
+        raise InstallerError("GitHub returned an invalid installer directory listing")
+
+    files: Dict[str, str] = {}
+    for entry in root:
+        if not isinstance(entry, dict) or entry.get("type") != "file":
+            continue
+        relative = _update_relative_path(str(entry.get("path", "")))
+        if relative in UPDATE_ROOT_FILES:
+            download_url = entry.get("download_url")
+            if not isinstance(download_url, str) or not download_url.startswith("https://"):
+                raise InstallerError(f"GitHub returned no safe download URL for {relative}")
+            files[relative] = download_url
+
+    pending = ["payload"]
+    while pending:
+        directory = pending.pop()
+        listing = _fetch_update_json(_update_api_url(directory, ref))
+        if not isinstance(listing, list):
+            raise InstallerError(f"GitHub returned an invalid listing for {directory}")
+        for entry in listing:
+            if not isinstance(entry, dict):
+                continue
+            relative = _update_relative_path(str(entry.get("path", "")))
+            if entry.get("type") == "dir":
+                pending.append(relative)
+                continue
+            if entry.get("type") != "file" or not relative.startswith("payload/"):
+                continue
+            download_url = entry.get("download_url")
+            if not isinstance(download_url, str) or not download_url.startswith("https://"):
+                raise InstallerError(f"GitHub returned no safe download URL for {relative}")
+            files[relative] = download_url
+
+    missing = sorted(UPDATE_ROOT_FILES.difference(files))
+    if missing:
+        raise InstallerError(
+            "GitHub update is missing required installer files: " + ", ".join(missing)
+        )
+    return files
+
+
+def _download_update_files(files: Dict[str, str], root: Path) -> None:
+    for relative, url in sorted(files.items()):
+        target = root / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        fd: Optional[int] = None
+        temporary: Optional[Path] = None
+        try:
+            data = _fetch_update_bytes(url)
+            fd, temporary_name = tempfile.mkstemp(
+                prefix=f".{target.name}.", suffix=".part", dir=str(target.parent)
+            )
+            temporary = Path(temporary_name)
+            with os.fdopen(fd, "wb") as stream:
+                fd = None
+                stream.write(data)
+            temporary.replace(target)
+        except (OSError, URLError) as exc:
+            raise InstallerError(f"could not download installer update file {relative}: {exc}") from exc
+        finally:
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            if temporary is not None:
+                try:
+                    temporary.unlink()
+                except OSError:
+                    pass
+
+
+def _updated_install_command(args: argparse.Namespace, latest_script: Path, bundle_root: Path) -> List[str]:
+    command = [sys.executable, str(latest_script), "--bundle", str(bundle_root)]
+    if args.adb != "adb":
+        command.extend(["--adb", args.adb])
+    if args.serial:
+        command.extend(["--serial", args.serial])
+    if args.dry_run:
+        command.append("--dry-run")
+    if args.quiet:
+        command.append("--quiet")
+    command.append("install")
+    if args.legacy_temproot:
+        command.append("--temproot")
+    elif args.boot_mode != "auto":
+        command.extend(["--boot-mode", args.boot_mode])
+    if args.confirm:
+        command.extend(["--confirm", args.confirm])
+    return command
+
+
+def update_and_install(args: argparse.Namespace) -> int:
+    """Fetch the latest installer source and run it with current bundle artifacts."""
+    current_root = args.bundle.resolve() if args.bundle else discover_bundle_root()
+    if current_root is None or discover_bundle_root(current_root) is None:
+        raise InstallerError(
+            "update must be run from an extracted self-contained vamanOS release bundle"
+        )
+
+    update_root = Path(tempfile.mkdtemp(prefix="vamanos-update-"))
+    try:
+        source_root = update_root / "installer"
+        source_root.mkdir(parents=True)
+        if not args.quiet:
+            print(f"Fetching latest installer code from {UPDATE_REPOSITORY}@{args.ref}...")
+        files = _collect_update_files(args.ref)
+        _download_update_files(files, source_root)
+        latest_script = source_root / "vamanos_installer.py"
+        try:
+            compile(latest_script.read_bytes(), str(latest_script), "exec")
+            latest_manifest = load_json(source_root / "manifest.json")
+            latest_profile = load_json(source_root / "device-profile.json")
+            if not isinstance(latest_manifest, dict) or not isinstance(latest_profile, dict):
+                raise InstallerError("downloaded manifest or device profile is not an object")
+        except (OSError, SyntaxError, InstallerError) as exc:
+            raise InstallerError(f"downloaded installer update failed validation: {exc}") from exc
+        if latest_profile.get("id") != "PS202_00001":
+            raise InstallerError("downloaded installer update is not the PS202 installer")
+        version = latest_manifest.get("manifest_version", "unknown")
+        if not args.quiet:
+            print(f"Downloaded installer version {version}; starting updated install...")
+        result = subprocess.run(
+            _updated_install_command(args, latest_script, current_root),
+            cwd=str(current_root),
+        )
+        return result.returncode
+    except (OSError, URLError) as exc:
+        raise InstallerError(f"could not fetch installer update: {exc}") from exc
+    finally:
+        shutil.rmtree(update_root, ignore_errors=True)
 
 
 def resolve_path(value: str, base: Path = INSTALLER_DIR) -> Path:
@@ -945,15 +1148,16 @@ class VamanOSInstaller:
             request = Request(
                 url, headers={"User-Agent": f"vamanOS-installer/{version}"}
             )
-            with (
-                urlopen(request, timeout=300) as response,
-                os.fdopen(fd, "wb") as stream,
-            ):
-                while True:
-                    chunk = response.read(1 << 20)
-                    if not chunk:
-                        break
-                    stream.write(chunk)
+            # Keep this nested form compatible with the older Python 3
+            # versions commonly installed on Linux hosts.  Parenthesized
+            # context-manager lists require Python 3.10+.
+            with urlopen(request, timeout=300) as response:
+                with os.fdopen(fd, "wb") as stream:
+                    while True:
+                        chunk = response.read(1 << 20)
+                        if not chunk:
+                            break
+                        stream.write(chunk)
             temporary.replace(target)
         except (OSError, URLError) as exc:
             try:
@@ -1186,6 +1390,7 @@ class VamanOSInstaller:
             "performance_profile",
             "launcher_config",
             "retroarch_baseline",
+            "retroarch_autoconfig",
         ):
             payloads[key] = self.payload_file(key)
         self.validate_launcher_config(payloads["launcher_config"], cores)
@@ -1944,6 +2149,44 @@ class VamanOSInstaller:
                 f'cp -f /data/local/tmp/vamanos-retroarch-baseline.cfg "{cfg_path}"; echo done'
             )
 
+    def install_retroarch_autoconfig(self, profile: Path) -> None:
+        """Install the verified PS202 pad profile without replacing a custom one."""
+        target = f"{RADIR_AUTOCONFIG}/{PS202_AUTOCONFIG_NAME}"
+        if self.dry_run:
+            self.msg(f"[dry-run] install RetroArch controller profile at {target}")
+            return
+
+        self.adb.shell_text(f"mkdir -p {shlex.quote(RADIR_AUTOCONFIG)}")
+        current = self.run_dir / PS202_AUTOCONFIG_NAME
+        if self.adb.pull(target, current, check=False) and current.is_file():
+            values = parse_cfg(current.read_text(encoding="utf-8", errors="replace"))
+            if values.get("input_device") == '"mtk-kpd"':
+                self.msg("  keeping existing mtk-kpd RetroArch profile")
+                return
+            self.msg(
+                "  existing RetroArch controller profile is not for mtk-kpd; "
+                "leaving it untouched"
+            )
+            return
+
+        self.adb.push(profile, target)
+        self.msg(f"  installed RetroArch mtk-kpd profile at {target}")
+
+    def verify_retroarch_autoconfig(self) -> None:
+        """Require RetroArch's Android driver to have a named PS202 profile."""
+        target = f"{RADIR_AUTOCONFIG}/{PS202_AUTOCONFIG_NAME}"
+        output = self.run_dir / "mtk-kpd.cfg.readback"
+        if not self.adb.pull(target, output, check=False) or not output.is_file():
+            raise InstallerError(
+                f"RetroArch controller profile is missing at {target}; "
+                "the mtk-kpd pad would use fallback input"
+            )
+        values = parse_cfg(output.read_text(encoding="utf-8", errors="replace"))
+        if values.get("input_device") != '"mtk-kpd"':
+            raise InstallerError(
+                f"RetroArch controller profile at {target} is not for mtk-kpd"
+            )
+
     def deploy_launchers(self, launchers: Path) -> None:
         self.adb.push(launchers, "/storage/sdcard1/ps202/configs/android_launchers.xml")
 
@@ -2300,6 +2543,7 @@ class VamanOSInstaller:
                     raise InstallerError(f"{key} binary is missing at {bin_path}")
             cores = self.core_files()
             self.verify_private_cores(cores)
+            self.verify_retroarch_autoconfig()
             self.validate_launcher_config(self.payload_file("launcher_config"), cores)
             self.verify_preserved_system_files()
             self.verify_frontend_music()
@@ -2532,6 +2776,9 @@ class VamanOSInstaller:
         self.install_frontend_music()
         self.install_cody_theme()
         self.install_retroarch_config(self.payload_file("retroarch_baseline"))
+        self.install_retroarch_autoconfig(
+            self.payload_file("retroarch_autoconfig")
+        )
         self.msg("[7/8] Deploying launch map + layout...")
         self.deploy_launchers(self.payload_file("launcher_config"))
         self.msg("[8/8] Backing up/removing old apps + HOME...")
@@ -2732,6 +2979,10 @@ class VamanOSInstaller:
                 self.payload_file("performance_profile"),
                 bundle / "ps202-performance.sh",
             )
+            shutil.copy2(
+                self.payload_file("retroarch_autoconfig"),
+                bundle / PS202_AUTOCONFIG_NAME,
+            )
 
             # write a bundle manifest with hashes for every release file. The
             # installer uses the payload entries before touching the device;
@@ -2823,6 +3074,31 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     p_inst.add_argument("--confirm", help="non-interactive confirmation token")
     p_inst.set_defaults(func="install")
 
+    p_update = sub.add_parser(
+        "update",
+        help="fetch the latest installer code and run it with this bundle's artifacts",
+    )
+    update_boot_group = p_update.add_mutually_exclusive_group()
+    update_boot_group.add_argument(
+        "--boot-mode",
+        choices=["auto", "force", "temproot", "skip"],
+        default="auto",
+        help="boot handling to pass to the updated installer",
+    )
+    update_boot_group.add_argument(
+        "--temproot",
+        dest="legacy_temproot",
+        action="store_true",
+        help="legacy alias for --boot-mode temproot",
+    )
+    p_update.add_argument("--confirm", help="non-interactive confirmation token")
+    p_update.add_argument(
+        "--ref",
+        default=UPDATE_REF,
+        help=f"repository branch or ref to fetch (default: {UPDATE_REF})",
+    )
+    p_update.set_defaults(func="update")
+
     p_ver = sub.add_parser("verify", help="verify a finished install")
     p_ver.set_defaults(func="verify")
 
@@ -2843,9 +3119,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = _build_arg_parser().parse_args(argv)
-    if not args.quiet:
+    if not args.quiet and args.func != "update":
         print_banner()
     try:
+        if args.func == "update":
+            return update_and_install(args)
         bundle_root = args.bundle.resolve() if args.bundle else discover_bundle_root()
         installer = VamanOSInstaller(
             adb=args.adb,

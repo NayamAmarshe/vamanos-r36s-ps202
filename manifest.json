@@ -8,7 +8,8 @@
     "boot_helper": "payload/ps202-boot.sh",
     "performance_profile": "payload/ps202-performance.sh",
     "launcher_config": "payload/android_launchers.xml",
-    "retroarch_baseline": "payload/retroarch-baseline.cfg"
+    "retroarch_baseline": "payload/retroarch-baseline.cfg",
+    "retroarch_autoconfig": "payload/mtk-kpd.cfg"
   },
   "artifacts": {
     "emulationstation": {

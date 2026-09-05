@@ -467,6 +467,45 @@ class AdbClientTests(unittest.TestCase):
         self.assertIn("pm install", calls[1][-1])
         self.assertIn("rm -f", calls[2][-1])
 
+    def test_recovers_completed_push_when_old_adbd_returns_eof(self):
+        calls = []
+
+        class RecordingRunner(inst.HostRunner):
+            def run(self, args, timeout=120, check=True, binary=False):
+                calls.append(list(args))
+                if "push" in args:
+                    return inst.CommandResult(1, "", "failed to read copy response: EOF")
+                return inst.CommandResult(0, "12\n", "")
+
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "core.so"
+            source.write_bytes(b"0123456789ab")
+            client = inst.AdbClient("adb", "SERIAL", RecordingRunner())
+            client.push(source, "/storage/sdcard1/retroarch/cores/core.so")
+
+        self.assertEqual(2, len(calls))
+        self.assertIn("wc -c", calls[1][-1])
+
+    def test_retries_incomplete_push_after_eof(self):
+        calls = []
+        sizes = iter((3, 12))
+
+        class RecordingRunner(inst.HostRunner):
+            def run(self, args, timeout=120, check=True, binary=False):
+                calls.append(list(args))
+                if "push" in args:
+                    return inst.CommandResult(1, "", "failed to read copy response: EOF")
+                return inst.CommandResult(0, f"{next(sizes)}\n", "")
+
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "core.so"
+            source.write_bytes(b"0123456789ab")
+            client = inst.AdbClient("adb", "SERIAL", RecordingRunner())
+            client.push(source, "/storage/sdcard1/retroarch/cores/core.so")
+
+        self.assertEqual(4, len(calls))
+        self.assertEqual(2, sum("push" in call for call in calls))
+
     def test_reads_serial_for_confirmation_when_available(self):
         class RecordingRunner(inst.HostRunner):
             def run(self, args, timeout=120, check=True, binary=False):

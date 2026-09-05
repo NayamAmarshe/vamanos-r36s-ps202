@@ -493,6 +493,8 @@ class HostRunner:
 
 
 class AdbClient:
+    PUSH_EOF_RETRIES = 2
+
     def __init__(
         self,
         adb: str = "adb",
@@ -523,7 +525,50 @@ class AdbClient:
         return self.shell(command, timeout=timeout, check=check).stdout.strip()
 
     def push(self, local: Path, remote: str, timeout: int = 600) -> None:
-        self.run(["push", str(local), remote], timeout=timeout)
+        """Push a file, recovering from old adbd's post-copy EOF response.
+
+        Some API-19/FUSE combinations write the complete file and then close
+        the ADB sync stream before returning its final OKAY packet. Treat that
+        specific failure as successful only when a remote byte-count check
+        matches the local file; incomplete transfers are retried.
+        """
+        args = ["push", str(local), remote]
+        for attempt in range(self.PUSH_EOF_RETRIES + 1):
+            result = self.run(args, timeout=timeout, check=False)
+            if result.returncode == 0:
+                return
+
+            detail = (result.stderr + "\n" + result.stdout).strip()
+            if "EOF" not in detail.upper():
+                raise InstallerError(
+                    f"command failed (rc={result.returncode}): "
+                    f"{' '.join(args)}\n{detail}"
+                )
+
+            try:
+                local_size = Path(local).stat().st_size
+            except OSError:
+                local_size = None
+            remote_size = self.remote_file_size(remote)
+            if local_size is not None and remote_size == local_size:
+                print(f"  recovered completed ADB push: {Path(local).name}")
+                return
+            if attempt < self.PUSH_EOF_RETRIES:
+                continue
+            raise InstallerError(
+                f"command failed (rc={result.returncode}): "
+                f"{' '.join(args)}\n{detail}"
+            )
+
+    def remote_file_size(self, remote: str) -> Optional[int]:
+        """Read a remote regular-file size using API-19-compatible shell tools."""
+        result = self.shell(
+            f"wc -c < {shlex.quote(remote)}", timeout=30, check=False
+        )
+        if result.returncode != 0:
+            return None
+        match = re.search(r"(?m)^\s*([0-9]+)\s*$", result.stdout)
+        return int(match.group(1)) if match else None
 
     def pull(
         self, remote: str, local: Path, timeout: int = 600, check: bool = True
@@ -2063,14 +2108,19 @@ class VamanOSInstaller:
                 f"V2 CODY theme SHA-256 {digest} != expected {spec['sha256']}"
             )
 
-        active = self.adb.shell_text(
-            "test -f /storage/sdcard1/themes/EPIC-CODY/theme.xml && echo yes",
+        active_path = self.adb.shell_text(
+            "if test -f /storage/sdcard1/themes/EPIC-CODY/theme.xml; then "
+            "echo shared; "
+            "elif test -f "
+            "/storage/sdcard1/Android/data/com.ps202.nayamamarshe.emulationstation/files/themes/EPIC-CODY/theme.xml; then "
+            "echo app-external; fi",
             check=False,
-        ).endswith("yes")
+        ).strip()
+        active = active_path in {"shared", "app-external"}
+        if active:
+            self.log(f"V2 CODY theme active at {active_path} storage")
         if require_active and not active:
-            raise InstallerError(
-                "V2 CODY theme archive is staged but EPIC-CODY did not activate"
-            )
+            raise InstallerError("V2 CODY theme archive is staged but EPIC-CODY did not activate")
         return active
 
     def install_frontend_music(self) -> None:

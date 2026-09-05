@@ -15,7 +15,7 @@
     "emulationstation": {
       "source": "release-inputs/apks/emulationstation.apk",
       "package": "com.ps202.nayamamarshe.emulationstation",
-      "sha256": "0d00441783d3e49955fe98d966a6c99725134d4e3866716cb188b058500efb52"
+      "sha256": "3e92a0dffc71eae3c28075dfa4df38c6254b87f92d69885f43ad7c35e2ae4440"
     },
     "retroarch": {
       "download": "downloads/retroarch-ra32-1.20.0.apk",

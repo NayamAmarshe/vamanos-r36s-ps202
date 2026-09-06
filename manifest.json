@@ -9,13 +9,14 @@
     "performance_profile": "payload/ps202-performance.sh",
     "launcher_config": "payload/android_launchers.xml",
     "retroarch_baseline": "payload/retroarch-baseline.cfg",
-    "retroarch_autoconfig": "payload/mtk-kpd.cfg"
+    "retroarch_autoconfig": "payload/mtk-kpd.cfg",
+    "ftp_tool": "payload/ps202-ftp.sh"
   },
   "artifacts": {
     "emulationstation": {
       "source": "release-inputs/apks/emulationstation.apk",
       "package": "com.ps202.nayamamarshe.emulationstation",
-      "sha256": "8fc4a5170f78b02b66f31af00c4894b19875ff5b72e4f4f96fe22b2e33d2c4d5"
+      "sha256": "b65852718c84837216c6eecaf6d0290b0f3bd1878179cddbe88bfa87a9ec7091"
     },
     "retroarch": {
       "download": "downloads/retroarch-ra32-1.20.0.apk",
@@ -226,6 +227,7 @@
     "ps202/logs",
     "ps202/cache",
     "ps202/cache/roms",
+    "ps202/tools",
     "retroarch/cores",
     "retroarch/autoconfig",
     "retroarch/info",

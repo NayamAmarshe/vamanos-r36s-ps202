@@ -103,6 +103,11 @@ RADIR_PRIVATE = "/data/data/com.retroarch.ra32/cores"
 PS202_AUTOCONFIG_NAME = "mtk-kpd.cfg"
 PPSSPP_PACKAGE = "org.ppsspp.ppsspp"
 ES_HOME_COMPONENT = "com.ps202.nayamamarshe.emulationstation/.PS202HomeActivity"
+ES_THEME_PARENT = (
+    "/storage/sdcard1/Android/data/"
+    "com.ps202.nayamamarshe.emulationstation/files/themes"
+)
+ES_CODY_THEME_DIR = f"{ES_THEME_PARENT}/EPIC-CODY"
 HOME_INTENT = (
     "am start -W -a android.intent.action.MAIN "
     "-c android.intent.category.HOME -f 0x10000000"
@@ -145,7 +150,49 @@ def load_json(path: Path) -> dict:
 def write_json(path: Path, value: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as stream:
-        json.dump(value, stream, indent=2, sort_keys=True)
+            json.dump(value, stream, indent=2, sort_keys=True)
+
+
+def extract_cody_theme_archive(source: Path, destination: Path) -> None:
+    """Extract the pinned V2 theme into a directory suitable for adb push.
+
+    The release archive has a flat theme root.  Accepting an optional
+    ``EPIC-CODY/`` prefix makes this helper tolerant of repacked copies while
+    still rejecting absolute paths, traversal, and symlink entries.
+    """
+    destination.mkdir(parents=True, exist_ok=True)
+    found_root_theme = False
+    try:
+        with zipfile.ZipFile(source) as archive:
+            for info in archive.infolist():
+                name = info.filename.replace("\\", "/")
+                if name.startswith("/"):
+                    raise InstallerError(f"unsafe CODY theme archive path: {name}")
+                parts = [part for part in name.split("/") if part not in ("", ".")]
+                if parts and parts[0] == "EPIC-CODY":
+                    parts = parts[1:]
+                if not parts:
+                    continue
+                if ".." in parts:
+                    raise InstallerError(f"unsafe CODY theme archive path: {name}")
+                target = destination.joinpath(*parts)
+                if info.is_dir():
+                    target.mkdir(parents=True, exist_ok=True)
+                    continue
+                # ZIP symlinks could escape the destination after deployment.
+                if ((info.external_attr >> 16) & 0o170000) == 0o120000:
+                    raise InstallerError(
+                        f"symlink is not allowed in CODY theme archive: {name}"
+                    )
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with archive.open(info, "r") as input_stream, target.open("wb") as output_stream:
+                    shutil.copyfileobj(input_stream, output_stream)
+                if parts == ["theme.xml"]:
+                    found_root_theme = True
+    except zipfile.BadZipFile as exc:
+        raise InstallerError(f"invalid CODY theme archive: {source}: {exc}") from exc
+    if not found_root_theme:
+        raise InstallerError("CODY theme archive has no root theme.xml")
 
 
 def _update_api_url(relative: str, ref: str) -> str:
@@ -1436,6 +1483,7 @@ class VamanOSInstaller:
             "launcher_config",
             "retroarch_baseline",
             "retroarch_autoconfig",
+            "ftp_tool",
         ):
             payloads[key] = self.payload_file(key)
         self.validate_launcher_config(payloads["launcher_config"], cores)
@@ -2034,6 +2082,17 @@ class VamanOSInstaller:
         for path in self.manifest.get("sd_layout", []):
             self.adb.shell_text(f"mkdir -p /storage/sdcard1/{path}")
 
+    def install_ftp_tool(self) -> None:
+        """Install the fixed FTP toggle script visible to EmulationStation."""
+        target = "/storage/sdcard1/ps202/tools/ps202-ftp.sh"
+        if self.dry_run:
+            self.msg(f"[dry-run] install {target}")
+            return
+        source = self.payload_file("ftp_tool")
+        self.adb.push(source, target)
+        self.adb.shell_text(f"chmod 0755 {shlex.quote(target)}; sync")
+        self.msg(f"  installed FTP tool at {target}")
+
     def install_cores(self, cores: Dict[str, Path]) -> None:
         """Install a readable SD source and an executable runtime copy.
 
@@ -2070,30 +2129,107 @@ class VamanOSInstaller:
             self.log(f"core {short}: private sha256={actual}")
 
     def install_cody_theme(self) -> None:
-        """Stage the V2 EPIC-CODY archive for the Android bootstrap importer."""
+        """Stage the archive and install its extracted root in the ES data dir.
+
+        KitKat's secondary-SD FUSE layer can prevent EmulationStation from
+        creating its own staging directory.  The installer already has root
+        ADB at this point, so it performs the one fixed theme deployment while
+        installing: the ZIP remains staged for recovery, and the extracted
+        ``EPIC-CODY/`` tree is published in ES's app-owned external storage.
+        """
         spec = self.manifest["artifacts"]["cody_theme"]
         target = spec["device_path"]
         source = self.art("cody_theme")
         if self.dry_run:
-            self.msg(f"[dry-run] install V2 CODY theme {target}")
+            self.msg(f"[dry-run] install V2 CODY theme archive {target}")
+            self.msg(f"[dry-run] install extracted V2 CODY theme {ES_CODY_THEME_DIR}")
             return
 
         current = self.run_dir / "cody-theme-current.zip"
+        archive_matches = False
         if self.adb.pull(target, current, check=False) and current.is_file():
-            if sha256_file(current) == spec["sha256"]:
-                self.msg("  V2 CODY theme archive already matches")
-                return
+            archive_matches = sha256_file(current) == spec["sha256"]
 
-        remote = "/data/local/tmp/vamanos-EPIC-CODY.zip"
-        backup = target + ".previous"
-        self.adb.push(source, remote)
-        self.adb.shell(
-            f"mkdir -p /storage/sdcard1/ps202/themes; "
-            f"if test -f '{target}'; then cp -f '{target}' '{backup}'; fi; "
-            f"cp -f '{remote}' '{target}' && sync"
-        )
+        if not archive_matches:
+            remote = "/data/local/tmp/vamanos-EPIC-CODY.zip"
+            backup = target + ".previous"
+            self.adb.push(source, remote)
+            self.adb.shell(
+                f"mkdir -p /storage/sdcard1/ps202/themes; "
+                f"if test -f '{target}'; then cp -f '{target}' '{backup}'; fi; "
+                f"cp -f '{remote}' '{target}' && sync"
+            )
+        else:
+            self.msg("  V2 CODY theme archive already matches")
+
         self.verify_cody_theme(require_active=False)
-        self.msg(f"  staged V2 CODY theme at {target}")
+        if self.adb.shell_text(
+            f"test -f {shlex.quote(ES_CODY_THEME_DIR + '/theme.xml')} && echo active",
+            check=False,
+        ).endswith("active"):
+            self.msg(f"  V2 CODY theme already active at {ES_CODY_THEME_DIR}")
+            return
+
+        self.install_cody_theme_to_app(source)
+        self.verify_cody_theme(require_active=True)
+        self.msg(f"  staged V2 CODY theme archive at {target}")
+        self.msg(f"  installed V2 CODY theme at {ES_CODY_THEME_DIR}")
+
+    def install_cody_theme_to_app(self, source: Path) -> None:
+        """Extract CODY on the host and publish it into ES app storage."""
+        with tempfile.TemporaryDirectory(prefix="vamanos-cody-") as directory:
+            local_root = Path(directory) / "EPIC-CODY"
+            extract_cody_theme_archive(source, local_root)
+
+            staging_parent = f"{ES_THEME_PARENT}/.EPIC-CODY.installing"
+            staged_nested = f"{staging_parent}/EPIC-CODY"
+            staging_q = shlex.quote(staging_parent)
+            self.adb.shell(
+                f"rm -rf {staging_q}; mkdir -p {staging_q}",
+                timeout=60,
+            )
+            # The remote destination is created first, so old adb's directory
+            # push semantics place local_root below it as EPIC-CODY/.  The
+            # fallback check also handles adb versions that copy the contents
+            # directly into an existing destination directory.
+            self.adb.push(local_root, staging_parent, timeout=1200)
+            staged_kind = self.adb.shell_text(
+                f"if test -f {shlex.quote(staged_nested + '/theme.xml')}; then "
+                f"echo nested; "
+                f"elif test -f {shlex.quote(staging_parent + '/theme.xml')}; then "
+                f"echo direct; fi",
+                timeout=120,
+                check=False,
+            ).strip()
+            if staged_kind == "nested":
+                staged_root = staged_nested
+            elif staged_kind == "direct":
+                staged_root = staging_parent
+            else:
+                raise InstallerError(
+                    "ADB pushed CODY theme, but the remote root theme.xml is missing"
+                )
+
+            destination = ES_CODY_THEME_DIR
+            backup = f"{ES_THEME_PARENT}/.EPIC-CODY.previous"
+            staged_q = shlex.quote(staged_root)
+            destination_q = shlex.quote(destination)
+            backup_q = shlex.quote(backup)
+            # All paths here are fixed installer-owned theme paths.  The
+            # installer is already in the root-ADB phase, so this atomic move
+            # is not subject to the ES process's KitKat/FUSE mkdir restriction.
+            publish = (
+                f"test -f {shlex.quote(staged_root + '/theme.xml')} && "
+                f"rm -rf {backup_q}; "
+                f"if test -d {destination_q}; then mv {destination_q} {backup_q}; fi; "
+                f"if mv {staged_q} {destination_q}; then "
+                f"rm -rf {backup_q} {staging_q}; "
+                f"else "
+                f"if test -d {backup_q}; then mv {backup_q} {destination_q}; fi; "
+                f"rm -rf {staging_q}; exit 1; fi; "
+                f"test -f {shlex.quote(destination + '/theme.xml')}"
+            )
+            self.adb.shell(publish, timeout=120)
 
     def verify_cody_theme(self, require_active: bool = False) -> bool:
         """Verify the staged archive and, optionally, V2's activated theme root."""
@@ -2822,6 +2958,7 @@ class VamanOSInstaller:
         self.install_apks()
         self.msg("[6/8] Installing cores + config...")
         self.ensure_sd_layout()
+        self.install_ftp_tool()
         self.install_cores(self.core_files())
         self.install_frontend_music()
         self.install_cody_theme()
@@ -3013,6 +3150,7 @@ class VamanOSInstaller:
                 "ps202-init.sh",
                 "retroarch-baseline.cfg",
                 "android_launchers.xml",
+                "ps202-ftp.sh",
             ):
                 shutil.copy2(
                     self.payload_file(
@@ -3020,6 +3158,7 @@ class VamanOSInstaller:
                             "ps202-init.sh": "init_script",
                             "retroarch-baseline.cfg": "retroarch_baseline",
                             "android_launchers.xml": "launcher_config",
+                            "ps202-ftp.sh": "ftp_tool",
                         }[name]
                     ),
                     bundle / name,

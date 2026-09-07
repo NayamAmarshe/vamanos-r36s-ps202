@@ -1,4 +1,5 @@
 import json
+import shutil
 import sys
 import tempfile
 import unittest
@@ -80,12 +81,20 @@ class ManifestProfileTests(unittest.TestCase):
         self.assertIn('input_volume_up = "volumeup"', baseline)
         self.assertIn('input_volume_down = "volumedown"', baseline)
         self.assertIn('audio_driver = "opensl"', baseline)
+        self.assertIn(
+            'savefile_directory = "/storage/sdcard0/Android/data/com.retroarch.ra32/files/saves"',
+            baseline,
+        )
 
         helper = (INSTALLER / "payload/ps202-boot.sh").read_text(encoding="utf-8")
         self.assertIn('input_volume_up = "volumeup"', helper)
         self.assertIn('input_volume_down = "volumedown"', helper)
         self.assertIn('audio_driver = "opensl"', helper)
         self.assertIn("audio_driver\\ =\\ *)", helper)
+        self.assertIn(
+            "echo 'savefile_directory = \"/storage/sdcard0/Android/data/com.retroarch.ra32/files/saves\"'",
+            helper,
+        )
 
     def test_retroarch_autoconfig_binds_verified_mtk_kpd_profile(self):
         profile_path = INSTALLER / MANIFEST["payload"]["retroarch_autoconfig"]
@@ -406,6 +415,24 @@ class MergeCfgTests(unittest.TestCase):
         overlay = 'audio_driver = "opensl"\ninput_player1_a = "99"\n'
         merged = inst.merge_cfg(existing, overlay)
         self.assertIn('audio_driver = "opensl"', merged)
+        self.assertIn('input_player1_a = "5"', merged)
+
+    def test_migrates_sd1_battery_saves_to_app_storage_without_touching_input(self):
+        existing = (
+            'savefile_directory = "/storage/sdcard1/ps202/saves"\n'
+            'input_player1_a = "5"\n'
+        )
+        overlay = (
+            'savefile_directory = "/storage/sdcard0/Android/data/'
+            'com.retroarch.ra32/files/saves"\n'
+            'input_player1_a = "99"\n'
+        )
+        merged = inst.merge_cfg(existing, overlay)
+        self.assertIn(
+            'savefile_directory = "/storage/sdcard0/Android/data/'
+            'com.retroarch.ra32/files/saves"',
+            merged,
+        )
         self.assertIn('input_player1_a = "5"', merged)
 
     def test_seeds_ps202_pad_when_stock_dpad_is_unbound(self):
@@ -788,6 +815,98 @@ class CoreInstallTests(unittest.TestCase):
         )
 
 
+class CodyThemeInstallTests(unittest.TestCase):
+    def test_extracts_rooted_theme_archive_safely(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "EPIC-CODY.zip"
+            with zipfile.ZipFile(source, "w") as archive:
+                archive.writestr("EPIC-CODY/theme.xml", "<theme/>")
+                archive.writestr("EPIC-CODY/nes/theme.xml", "<system/>")
+            destination = root / "out" / "EPIC-CODY"
+
+            inst.extract_cody_theme_archive(source, destination)
+
+            self.assertEqual("<theme/>", (destination / "theme.xml").read_text())
+            self.assertEqual(
+                "<system/>", (destination / "nes/theme.xml").read_text()
+            )
+
+    def test_installer_pushes_extracted_theme_into_es_app_storage(self):
+        pushes = []
+        commands = []
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "EPIC-CODY.zip"
+            with zipfile.ZipFile(source, "w") as archive:
+                archive.writestr("theme.xml", "<theme/>")
+                archive.writestr("nes/theme.xml", "<system/>")
+            digest = inst.sha256_file(source)
+
+            class FakeAdb:
+                def pull(self, remote, local, check=False):
+                    if remote.endswith("EPIC-CODY.zip"):
+                        shutil.copy2(source, local)
+                        return True
+                    return False
+
+                def push(self, local, remote, timeout=600):
+                    local = Path(local)
+                    self.assert_theme = (local / "theme.xml").is_file()
+                    pushes.append((local.name, remote, self.assert_theme))
+
+                def shell(self, command, timeout=300, check=True):
+                    commands.append(command)
+                    return inst.CommandResult(0, "", "")
+
+                def shell_text(self, command, timeout=120, check=True):
+                    commands.append(command)
+                    if command.startswith("test -f ") and "echo active" in command:
+                        return ""
+                    if ".EPIC-CODY.installing/EPIC-CODY/theme.xml" in command:
+                        return "nested"
+                    if command.startswith("if test -f /storage/sdcard1/themes"):
+                        return "app-external"
+                    return ""
+
+            installer = inst.VamanOSInstaller.__new__(inst.VamanOSInstaller)
+            installer.manifest = {
+                "artifacts": {
+                    "cody_theme": {
+                        "device_path": "/storage/sdcard1/ps202/themes/EPIC-CODY.zip",
+                        "sha256": digest,
+                    }
+                }
+            }
+            installer.adb = FakeAdb()
+            installer.run_dir = root / "run"
+            installer.run_dir.mkdir()
+            installer.dry_run = False
+            installer.art = lambda key: source
+            installer.msg = lambda *args, **kwargs: None
+            installer.log = lambda *args, **kwargs: None
+
+            installer.install_cody_theme()
+
+        self.assertEqual(
+            [
+                (
+                    "EPIC-CODY",
+                    inst.ES_THEME_PARENT + "/.EPIC-CODY.installing",
+                    True,
+                )
+            ],
+            pushes,
+        )
+        self.assertTrue(
+            any(
+                inst.ES_CODY_THEME_DIR in command and "mv" in command
+                for command in commands
+            )
+        )
+
+
 class FrontendMusicTests(unittest.TestCase):
     def test_installs_missing_tracks_and_keeps_existing_tracks(self):
         pushes = []
@@ -1025,6 +1144,7 @@ class FactoryTemprootTests(unittest.TestCase):
                 "launcher_config",
                 "retroarch_baseline",
                 "retroarch_autoconfig",
+                "ftp_tool",
             },
             set(payloads),
         )

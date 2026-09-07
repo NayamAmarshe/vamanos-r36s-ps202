@@ -45,7 +45,7 @@ if [ -d /storage/sdcard1/retroarch/cores ]; then
     echo 'input_autoconfigure_dir = "/storage/sdcard1/retroarch/autoconfig/"'
     echo 'content_show_history = "false"'
     echo 'video_vsync = "true"'
-    echo 'savefile_directory = "/storage/sdcard1/ps202/saves"'
+    echo 'savefile_directory = "/storage/sdcard0/Android/data/com.retroarch.ra32/files/saves"'
     echo 'savestate_directory = "/storage/sdcard1/ps202/states"'
     echo 'screenshot_directory = "/storage/sdcard1/ps202/screenshots"'
     echo 'audio_latency = "96"'

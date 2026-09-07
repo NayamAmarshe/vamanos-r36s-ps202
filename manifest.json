@@ -9,13 +9,14 @@
     "performance_profile": "payload/ps202-performance.sh",
     "launcher_config": "payload/android_launchers.xml",
     "retroarch_baseline": "payload/retroarch-baseline.cfg",
-    "retroarch_autoconfig": "payload/mtk-kpd.cfg"
+    "retroarch_autoconfig": "payload/mtk-kpd.cfg",
+    "ftp_tool": "payload/ps202-ftp.sh"
   },
   "artifacts": {
     "emulationstation": {
       "source": "release-inputs/apks/emulationstation.apk",
       "package": "com.ps202.nayamamarshe.emulationstation",
-      "sha256": "3e92a0dffc71eae3c28075dfa4df38c6254b87f92d69885f43ad7c35e2ae4440"
+      "sha256": "dd64114aef7bf686c961c1ec78da058b3b608e8bf2f3e6b24825fdff583de6a5"
     },
     "retroarch": {
       "download": "downloads/retroarch-ra32-1.20.0.apk",
@@ -94,7 +95,7 @@
     "cody_theme": {
       "source": "release-inputs/themes/EPIC-CODY.zip",
       "device_path": "/storage/sdcard1/ps202/themes/EPIC-CODY.zip",
-      "sha256": "b899d6ef9af5afc44b364d809f09362936f12fe51bdeb5c3f5f5dfe91a38155b",
+      "sha256": "9ebe56c1cbe94ca9b96853b7e6ea05bff31d69edc7aed29f0aa9ae614f4bd63c",
       "format_version": 7
     },
     "frontend_music": {
@@ -226,6 +227,7 @@
     "ps202/logs",
     "ps202/cache",
     "ps202/cache/roms",
+    "ps202/tools",
     "retroarch/cores",
     "retroarch/autoconfig",
     "retroarch/info",

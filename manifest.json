@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "product": "vamanOS for R36S PS202",
-  "manifest_version": "1.1.1",
+  "manifest_version": "1.1.2",
   "device_profile": "device-profile.json",
   "payload": {
     "init_script": "payload/ps202-init.sh",
@@ -16,7 +16,7 @@
     "emulationstation": {
       "source": "release-inputs/apks/emulationstation.apk",
       "package": "com.ps202.nayamamarshe.emulationstation",
-      "sha256": "d009f1b814bcb70eb75edde121130fa819d9609e7b2e70755df30051c9f20616"
+      "sha256": "b452908cf48534313b80cb72e8262ca5f530a1bea7eab98bc78012abd949e0c0"
     },
     "retroarch": {
       "download": "downloads/retroarch-ra32-1.20.0.apk",

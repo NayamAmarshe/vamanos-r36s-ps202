@@ -71,6 +71,10 @@ and press Enter. This is the final yes before installation begins.
 Keep the cable connected until the installer says it is finished. The
 handheld reboots at the end to start vamanOS correctly.
 
+Upgrades refresh the frontend's shipped system definitions without replacing
+the user's controller map or EmulationStation settings. Existing installs
+therefore receive newly supported systems such as N64 automatically.
+
 ### Repairing an interrupted install after root ADB was enabled
 
 If an older installer stopped while replacing the Android boot animation with
@@ -161,6 +165,7 @@ Put games in the matching folder on the SD card:
 | Game Boy / Color / Advance         | `roms/gb`, `roms/gbc`, or `roms/gba`                                 |
 | PlayStation                        | `roms/psx`                                                           |
 | PSP                                | `roms/psp`                                                           |
+| Nintendo 64                        | `roms/n64`                                                           |
 | Arcade / CPS1 / CPS2 / CPS3 / MAME | `roms/arcade`, `roms/CPS1`, `roms/CPS2`, `roms/CPS3`, or `roms/mame` |
 | Master System / Game Gear          | `roms/SMS` or `roms/gamegear`                                        |
 | Atari 2600 / Lynx                  | `roms/atari2600` or `roms/atarilynx`                                 |

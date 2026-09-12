@@ -16,7 +16,7 @@
     "emulationstation": {
       "source": "release-inputs/apks/emulationstation.apk",
       "package": "com.ps202.nayamamarshe.emulationstation",
-      "sha256": "b452908cf48534313b80cb72e8262ca5f530a1bea7eab98bc78012abd949e0c0"
+      "sha256": "b051043e596195788336e911aff9cb70823d397d2975944cffddcb2f324f36bd"
     },
     "retroarch": {
       "download": "downloads/retroarch-ra32-1.20.0.apk",
@@ -145,7 +145,8 @@
     "gearcoleco": "gearcoleco_libretro_android.so",
     "mednafen_pce_fast": "mednafen_pce_fast_libretro_android.so",
     "mednafen_wswan": "mednafen_wswan_libretro_android.so",
-    "mupen64plus_next_gles2": "mupen64plus_next_gles2_api19_libretro_android.so"
+    "mupen64plus_next_gles2": "mupen64plus_next_gles2_api19_libretro_android.so",
+    "parallel_n64": "parallel_n64_libretro_android.so"
   },
   "core_sha256": {
     "fceumm": "dfd981b8de4411de7b325b180403e850c4f9f4948c8a2d826a81e822ec9f520e",
@@ -163,7 +164,8 @@
     "gearcoleco": "2e68a9ace48b63c7b3e24725df32a40b9512458d571e1c5206add18b604c24a5",
     "mednafen_pce_fast": "1ff73777936cfe9b5a3959eb97b0ca0884b6a2c0289d0165ce52e17368a621fc",
     "mednafen_wswan": "434948831287bb274b8eca4e9c85ed8308b04c18de220d2e4f91fd15ade5d395",
-    "mupen64plus_next_gles2": "53e10d9e01652d6233111e0b9600abcc57eb723a557ab7739392cfaeb31f7dcb"
+    "mupen64plus_next_gles2": "53e10d9e01652d6233111e0b9600abcc57eb723a557ab7739392cfaeb31f7dcb",
+    "parallel_n64": "c9ec6beee7871e5e4ee1e63d2a44f9363cc16807a33509edf2ff93a85c83168b"
   },
   "supported_systems": [
     "colecovision",

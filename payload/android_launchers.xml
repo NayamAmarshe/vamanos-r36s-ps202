@@ -19,7 +19,7 @@
     <launcher system="mame" package="com.retroarch.ra32" activity="com.retroarch.browser.retroactivity.RetroActivityFuture" core="fbneo_libretro_android.so" />
     <launcher system="ngpc" package="com.retroarch.ra32" activity="com.retroarch.browser.retroactivity.RetroActivityFuture" core="mednafen_ngp_libretro_android.so" />
     <launcher system="nes" package="com.retroarch.ra32" activity="com.retroarch.browser.retroactivity.RetroActivityFuture" core="fceumm_libretro_android.so" />
-    <launcher system="n64" package="com.retroarch.ra32" activity="com.retroarch.browser.retroactivity.RetroActivityFuture" core="mupen64plus_next_gles2_api19_libretro_android.so" />
+    <launcher system="n64" package="com.retroarch.ra32" activity="com.retroarch.browser.retroactivity.RetroActivityFuture" core="parallel_n64_libretro_android.so" />
     <launcher system="pcengine" package="com.retroarch.ra32" activity="com.retroarch.browser.retroactivity.RetroActivityFuture" core="mednafen_pce_fast_libretro_android.so" />
     <launcher system="psp" package="org.ppsspp.ppsspp" activity="org.ppsspp.ppsspp.PpssppActivity" action="android.intent.action.VIEW" type="application/octet-stream" />
     <launcher system="psx" package="com.retroarch.ra32" activity="com.retroarch.browser.retroactivity.RetroActivityFuture" core="pcsx_rearmed_libretro_android.so" />

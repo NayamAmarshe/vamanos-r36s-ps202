@@ -37,7 +37,9 @@ PPSSPP and uses this bundled copy only as a fallback when PPSSPP is missing.
   release-input path.
 - `cores-api19/` — the ARMv7/API-19-compatible cores used for the main
   consoles. These are preferred whenever the same core exists in both folders.
-  TGB Dual supplies both GB and GBC, while gpSP supplies GBA.
+  TGB Dual supplies both GB and GBC, gpSP supplies GBA, and the N64 launcher
+  uses the bundled ParaLLEl N64 build with both SysV and GNU ELF hash tables
+  for the stock Android 4.4 linker.
 - `cores/` — the additional checked cores used for arcade, Atari, Master
   System, Game Gear, Neo Geo Pocket, PC Engine, ColecoVision, and WonderSwan.
   The installer copies every launcher core into RetroArch's private runtime

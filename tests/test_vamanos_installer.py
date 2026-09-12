@@ -374,7 +374,7 @@ class ManifestProfileTests(unittest.TestCase):
             INSTALLER / "payload/android_launchers.xml", cores
         )
         self.assertEqual(23, len(MANIFEST["supported_systems"]))
-        self.assertEqual(16, len(cores))
+        self.assertEqual(17, len(cores))
 
     def test_rom_layout_matches_frontend_paths(self):
         layout = set(MANIFEST["sd_layout"])
@@ -394,7 +394,7 @@ class ManifestProfileTests(unittest.TestCase):
         )
         self.assertIn('core="tgbdual_libretro_android.so"', launcher)
         self.assertIn('core="gpsp_libretro_android.so"', launcher)
-        self.assertIn('core="mupen64plus_next_gles2_api19_libretro_android.so"', launcher)
+        self.assertIn('core="parallel_n64_libretro_android.so"', launcher)
 
     def test_debloat_protected_contains_critical_packages(self):
         protected = set(PROFILE["debloat"]["protected"])

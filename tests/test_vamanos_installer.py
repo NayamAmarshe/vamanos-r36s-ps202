@@ -90,6 +90,15 @@ class ManifestProfileTests(unittest.TestCase):
             'savestate_directory = "/storage/sdcard0/Android/data/com.retroarch.ra32/files/states"',
             baseline,
         )
+        for setting in (
+            'savefiles_in_content_dir = "false"',
+            'sort_savefiles_enable = "false"',
+            'sort_savefiles_by_content_enable = "false"',
+            'savestates_in_content_dir = "false"',
+            'sort_savestates_enable = "false"',
+            'sort_savestates_by_content_enable = "false"',
+        ):
+            self.assertIn(setting, baseline)
 
         helper = (INSTALLER / "payload/ps202-boot.sh").read_text(encoding="utf-8")
         self.assertIn('input_volume_up = "volumeup"', helper)
@@ -111,6 +120,10 @@ class ManifestProfileTests(unittest.TestCase):
         )
         self.assertIn(
             "/storage/sdcard0/Android/data/com.retroarch.ra32/files/states",
+            helper,
+        )
+        self.assertIn(
+            "sort_savestates_enable\\ =\\ *)",
             helper,
         )
 
@@ -452,6 +465,27 @@ class MergeCfgTests(unittest.TestCase):
             'com.retroarch.ra32/files/saves"',
             merged,
         )
+        self.assertIn('input_player1_a = "5"', merged)
+
+    def test_migrates_sorted_save_paths_without_touching_input(self):
+        existing = (
+            'savefile_directory = "/storage/sdcard0/Android/data/com.retroarch.ra32/files/saves"\n'
+            'savestate_directory = "/storage/sdcard0/Android/data/com.retroarch.ra32/files/states"\n'
+            'sort_savefiles_enable = "true"\n'
+            'sort_savestates_enable = "true"\n'
+            'input_player1_a = "5"\n'
+        )
+        overlay = (
+            'sort_savefiles_enable = "false"\n'
+            'sort_savestates_enable = "false"\n'
+            'sort_savefiles_by_content_enable = "false"\n'
+            'sort_savestates_by_content_enable = "false"\n'
+        )
+        merged = inst.merge_cfg(existing, overlay)
+        self.assertIn('sort_savefiles_enable = "false"', merged)
+        self.assertIn('sort_savestates_enable = "false"', merged)
+        self.assertIn('sort_savefiles_by_content_enable = "false"', merged)
+        self.assertIn('sort_savestates_by_content_enable = "false"', merged)
         self.assertIn('input_player1_a = "5"', merged)
 
     def test_seeds_ps202_pad_when_stock_dpad_is_unbound(self):

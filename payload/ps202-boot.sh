@@ -49,7 +49,13 @@ if [ -d /storage/sdcard1/retroarch/cores ]; then
     echo 'content_show_history = "false"'
     echo 'video_vsync = "true"'
     echo 'savefile_directory = "/storage/sdcard0/Android/data/com.retroarch.ra32/files/saves"'
+    echo 'savefiles_in_content_dir = "false"'
+    echo 'sort_savefiles_enable = "false"'
+    echo 'sort_savefiles_by_content_enable = "false"'
     echo 'savestate_directory = "/storage/sdcard0/Android/data/com.retroarch.ra32/files/states"'
+    echo 'savestates_in_content_dir = "false"'
+    echo 'sort_savestates_enable = "false"'
+    echo 'sort_savestates_by_content_enable = "false"'
     echo 'screenshot_directory = "/storage/sdcard1/ps202/screenshots"'
     echo 'audio_latency = "96"'
     echo 'pcsx_rearmed_dynarec = "enabled"'
@@ -61,27 +67,68 @@ if [ -d /storage/sdcard1/retroarch/cores ]; then
   } > "$CFG"
   chmod 664 "$CFG"
   fi
-  # The stock/shared config may already contain an unusable audio backend
-  # such as rsound. Android 4.4's toolbox has no sed, awk, or printf, so use
-  # only the shell's portable read/case/echo operations for this one setting.
-  if [ -f "$CFG" ] && ! grep -q '^audio_driver = "opensl"$' "$CFG" 2>/dev/null; then
+  # Normalize the audio and save-path settings on upgrades. Android 4.4's
+  # toolbox has no sed, awk, or printf, so use only portable shell
+  # read/case/echo operations. This rewrites only these known vamanOS keys;
+  # input bindings and all other user settings remain intact.
+  needs_cfg_migration=0
+  for kv in \
+    'audio_driver = "opensl"' \
+    'savefiles_in_content_dir = "false"' \
+    'sort_savefiles_enable = "false"' \
+    'sort_savefiles_by_content_enable = "false"' \
+    'savestates_in_content_dir = "false"' \
+    'sort_savestates_enable = "false"' \
+    'sort_savestates_by_content_enable = "false"'; do
+    k=${kv%% = *}
+    expected=${kv#* = }
+    if ! grep -q "^$k = $expected$" "$CFG" 2>/dev/null; then
+      needs_cfg_migration=1
+      break
+    fi
+  done
+  if [ -f "$CFG" ] && [ "$needs_cfg_migration" = 1 ]; then
     CFG_TMP="${CFG}.vamanos.tmp"
     if : > "$CFG_TMP"; then
       copy_ok=1
       while IFS= read -r line || [ -n "$line" ]; do
         case "$line" in
           audio_driver\ =\ *) line='audio_driver = "opensl"' ;;
+          savefiles_in_content_dir\ =\ *) line='savefiles_in_content_dir = "false"' ;;
+          sort_savefiles_enable\ =\ *) line='sort_savefiles_enable = "false"' ;;
+          sort_savefiles_by_content_enable\ =\ *) line='sort_savefiles_by_content_enable = "false"' ;;
+          savestates_in_content_dir\ =\ *) line='savestates_in_content_dir = "false"' ;;
+          sort_savestates_enable\ =\ *) line='sort_savestates_enable = "false"' ;;
+          sort_savestates_by_content_enable\ =\ *) line='sort_savestates_by_content_enable = "false"' ;;
         esac
         if ! echo "$line" >> "$CFG_TMP"; then
           copy_ok=0
           break
         fi
       done < "$CFG"
+      if [ "$copy_ok" = 1 ]; then
+        for kv in \
+          'audio_driver = "opensl"' \
+          'savefiles_in_content_dir = "false"' \
+          'sort_savefiles_enable = "false"' \
+          'sort_savefiles_by_content_enable = "false"' \
+          'savestates_in_content_dir = "false"' \
+          'sort_savestates_enable = "false"' \
+          'sort_savestates_by_content_enable = "false"'; do
+          k=${kv%% = *}
+          if ! grep -q "^$k = " "$CFG_TMP" 2>/dev/null; then
+            if ! echo "$kv" >> "$CFG_TMP"; then
+              copy_ok=0
+              break
+            fi
+          fi
+        done
+      fi
       if [ "$copy_ok" = 1 ] && cp -f "$CFG_TMP" "$CFG"; then
         rm -f "$CFG_TMP"
-        echo "audio driver set to opensl" >> "$LOG"
+        echo "retroarch config normalized (audio + save paths)" >> "$LOG"
       else
-        echo "WARNING: could not set audio driver to opensl" >> "$LOG"
+        echo "WARNING: could not normalize RetroArch config" >> "$LOG"
         rm -f "$CFG_TMP"
       fi
     else
@@ -89,28 +136,7 @@ if [ -d /storage/sdcard1/retroarch/cores ]; then
     fi
   fi
   mkdir -p /data/local/ra-snapshot
-  # Merge only tuning keys when the config already exists; never rewrite
-  # personal input mappings or the user's other RetroArch settings.
-  if [ -f "$CFG" ]; then
-    for kv in \
-      'audio_driver = "opensl"' \
-      'audio_latency = "96"' \
-      'input_volume_up = "volumeup"' \
-      'input_volume_down = "volumedown"' \
-      'pcsx_rearmed_dynarec = "enabled"' \
-      'pcsx_rearmed_neon = "enabled"' \
-      'pcsx_rearmed_frameskip = "0"' \
-      'pcsx_rearmed_internal_resolution = "1x"' \
-      'pcsx_rearmed_region = "auto"' \
-      'video_swap_interval = "1"'; do
-      k=${kv%% = *}
-      if ! grep -q "^$k = " "$CFG" 2>/dev/null; then
-        echo "$kv" >> "$CFG"
-        echo "merged $k" >> "$LOG"
-      fi
-    done
-    echo "sdcard0 retroarch.cfg preserved + merged" >> "$LOG"
-  fi
+  echo "sdcard0 retroarch.cfg preserved + migrated" >> "$LOG"
   echo "retroarch cores: SD source preserved; private runtime copy is installer-managed" >> "$LOG"
 fi
 

@@ -124,6 +124,13 @@ requires files that are not in the current bundle and cannot be downloaded by
 the installer, it will stop and report the missing file rather than silently
 mixing releases.
 
+The v1.7.5 update also repairs the RetroArch save-state configuration on
+existing installations. It disables per-core/content sorting, which could
+leave old Android 4.4 installations stuck at `Saving state 0%`, while keeping
+the existing controller bindings and user files. The migration runs during the
+normal update/install config merge and is repeated safely by the boot helper;
+old per-core state files are preserved and are not deleted.
+
 On a factory device, the installer reads the boot image already on that
 handheld and saves it to the SD card first. It knows the V10 boot image and
 the identical V11/V12 boot image. When one matches exactly, it uses the

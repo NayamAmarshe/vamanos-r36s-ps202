@@ -81,8 +81,13 @@ class ManifestProfileTests(unittest.TestCase):
         self.assertIn('input_volume_up = "volumeup"', baseline)
         self.assertIn('input_volume_down = "volumedown"', baseline)
         self.assertIn('audio_driver = "opensl"', baseline)
+        self.assertIn('ozone_menu_color_theme = "10"', baseline)
         self.assertIn(
             'savefile_directory = "/storage/sdcard0/Android/data/com.retroarch.ra32/files/saves"',
+            baseline,
+        )
+        self.assertIn(
+            'savestate_directory = "/storage/sdcard0/Android/data/com.retroarch.ra32/files/states"',
             baseline,
         )
 
@@ -90,9 +95,22 @@ class ManifestProfileTests(unittest.TestCase):
         self.assertIn('input_volume_up = "volumeup"', helper)
         self.assertIn('input_volume_down = "volumedown"', helper)
         self.assertIn('audio_driver = "opensl"', helper)
+        self.assertIn("echo 'ozone_menu_color_theme = \"10\"'", helper)
         self.assertIn("audio_driver\\ =\\ *)", helper)
         self.assertIn(
             "echo 'savefile_directory = \"/storage/sdcard0/Android/data/com.retroarch.ra32/files/saves\"'",
+            helper,
+        )
+        self.assertIn(
+            "echo 'savestate_directory = \"/storage/sdcard0/Android/data/com.retroarch.ra32/files/states\"'",
+            helper,
+        )
+        self.assertIn(
+            "mkdir -p /storage/sdcard0/Android/data/com.retroarch.ra32/files/saves",
+            helper,
+        )
+        self.assertIn(
+            "/storage/sdcard0/Android/data/com.retroarch.ra32/files/states",
             helper,
         )
 
@@ -355,8 +373,8 @@ class ManifestProfileTests(unittest.TestCase):
         installer.validate_launcher_config(
             INSTALLER / "payload/android_launchers.xml", cores
         )
-        self.assertEqual(22, len(MANIFEST["supported_systems"]))
-        self.assertEqual(15, len(cores))
+        self.assertEqual(23, len(MANIFEST["supported_systems"]))
+        self.assertEqual(16, len(cores))
 
     def test_rom_layout_matches_frontend_paths(self):
         layout = set(MANIFEST["sd_layout"])
@@ -376,6 +394,7 @@ class ManifestProfileTests(unittest.TestCase):
         )
         self.assertIn('core="tgbdual_libretro_android.so"', launcher)
         self.assertIn('core="gpsp_libretro_android.so"', launcher)
+        self.assertIn('core="mupen64plus_next_gles2_api19_libretro_android.so"', launcher)
 
     def test_debloat_protected_contains_critical_packages(self):
         protected = set(PROFILE["debloat"]["protected"])
@@ -1013,6 +1032,9 @@ class AndroidBootSplashTests(unittest.TestCase):
             def push(self, local, remote, timeout=600):
                 pushed.append((local, remote))
 
+            def remount_system_rw(self):
+                return None
+
             def shell(self, command, timeout=300, check=True):
                 shell_commands.append(command)
                 return inst.CommandResult(0, "", "")
@@ -1039,6 +1061,27 @@ class AndroidBootSplashTests(unittest.TestCase):
             "/system/media/bootanimation.zip.vamanos-previous", shell_commands[0]
         )
         self.assertNotIn("/dev/block/mmcblk0", shell_commands[0])
+
+    def test_live_patch_registers_privileged_init_service(self):
+        stock = (ROOT / "ps202-project/backups/boot-images/boot-stock.img").resolve()
+        if not stock.is_file():
+            self.skipTest("reference boot image not present")
+        find_binary = INSTALLER / "release-inputs/bin/find"
+        init_script = INSTALLER / "payload/ps202-init.sh"
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "boot-live-patched.img"
+            inst.patch_boot_image_file(
+                stock, output, find_binary, init_script, PROFILE
+            )
+            entries = inst._parse_newc(
+                inst._boot_layout(
+                    output.read_bytes(), PROFILE["regions"]["boot"]["length"]
+                )["cpio"]
+            )
+            init_rc = next(body for name, _mode, body in entries if name == "init.rc")
+            self.assertIn(
+                b"service ps202init /system/bin/sh /sbin/ps202-init.sh", init_rc
+            )
 
 
 class DebloatBackupTests(unittest.TestCase):
@@ -1272,6 +1315,7 @@ class AucBinariesTests(unittest.TestCase):
         inst_.manifest = MANIFEST
         inst_.adb = type("FakeAdb", (), {})()
         inst_.adb.push = lambda local, remote, timeout=600: pushed.append(remote)
+        inst_.adb.remount_system_rw = lambda: None
         inst_.adb.shell_text = lambda *a, **k: "done"
         inst_.art = lambda key: ROOT / "tools/ps202-installer" / "manifest.json"
         inst_.msg = lambda *a, **k: None

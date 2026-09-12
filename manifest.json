@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "product": "vamanOS for R36S PS202",
-  "manifest_version": "1.1.0",
+  "manifest_version": "1.1.1",
   "device_profile": "device-profile.json",
   "payload": {
     "init_script": "payload/ps202-init.sh",
@@ -16,7 +16,7 @@
     "emulationstation": {
       "source": "release-inputs/apks/emulationstation.apk",
       "package": "com.ps202.nayamamarshe.emulationstation",
-      "sha256": "dd64114aef7bf686c961c1ec78da058b3b608e8bf2f3e6b24825fdff583de6a5"
+      "sha256": "d009f1b814bcb70eb75edde121130fa819d9609e7b2e70755df30051c9f20616"
     },
     "retroarch": {
       "download": "downloads/retroarch-ra32-1.20.0.apk",
@@ -144,7 +144,8 @@
     "handy": "handy_libretro_android.so",
     "gearcoleco": "gearcoleco_libretro_android.so",
     "mednafen_pce_fast": "mednafen_pce_fast_libretro_android.so",
-    "mednafen_wswan": "mednafen_wswan_libretro_android.so"
+    "mednafen_wswan": "mednafen_wswan_libretro_android.so",
+    "mupen64plus_next_gles2": "mupen64plus_next_gles2_api19_libretro_android.so"
   },
   "core_sha256": {
     "fceumm": "dfd981b8de4411de7b325b180403e850c4f9f4948c8a2d826a81e822ec9f520e",
@@ -161,7 +162,8 @@
     "handy": "b6e6c34c30484c1e351ec843560a3b0dcbf68a98cb993549d1925fb87b1210d1",
     "gearcoleco": "2e68a9ace48b63c7b3e24725df32a40b9512458d571e1c5206add18b604c24a5",
     "mednafen_pce_fast": "1ff73777936cfe9b5a3959eb97b0ca0884b6a2c0289d0165ce52e17368a621fc",
-    "mednafen_wswan": "434948831287bb274b8eca4e9c85ed8308b04c18de220d2e4f91fd15ade5d395"
+    "mednafen_wswan": "434948831287bb274b8eca4e9c85ed8308b04c18de220d2e4f91fd15ade5d395",
+    "mupen64plus_next_gles2": "53e10d9e01652d6233111e0b9600abcc57eb723a557ab7739392cfaeb31f7dcb"
   },
   "supported_systems": [
     "colecovision",
@@ -181,6 +183,7 @@
     "mame",
     "ngpc",
     "nes",
+    "n64",
     "pcengine",
     "psp",
     "psx",
@@ -211,6 +214,7 @@
     "roms/mame",
     "roms/ngpc",
     "roms/nes",
+    "roms/n64",
     "roms/pcengine",
     "roms/psp",
     "roms/psx",

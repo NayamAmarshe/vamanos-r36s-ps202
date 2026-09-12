@@ -676,6 +676,36 @@ class AdbClient:
         out = self.shell_text("id", check=False)
         return out.startswith("uid=0")
 
+    def remount_system_rw(self) -> None:
+        """Remount /system read-write and verify the kernel accepted it.
+
+        On this KitKat device a patched adbd can report uid=0 while still
+        lacking CAP_SYS_ADMIN. Checking only ``id`` (or ignoring the mount
+        command's status) turns that case into a misleading checksum failure.
+        """
+        result = self.shell("mount -o rw,remount /system", timeout=60, check=False)
+        mounts = self.shell("mount", timeout=30, check=False)
+        system_rw = False
+        for line in mounts.stdout.replace("\r", "").splitlines():
+            fields = line.split()
+            if len(fields) >= 4 and fields[1] == "/system":
+                system_rw = "rw" in fields[3].split(",")
+                break
+        detail = " ".join(
+            part.strip() for part in (result.stdout, result.stderr) if part.strip()
+        )
+        if result.returncode != 0 or not system_rw:
+            mount_state = " / ".join(
+                line.strip()
+                for line in mounts.stdout.replace("\r", "").splitlines()
+                if "/system" in line
+            )
+            raise InstallerError(
+                "could not remount /system read-write"
+                + (f" (mount rc={result.returncode}: {detail})" if detail else "")
+                + (f"; current mount: {mount_state}" if mount_state else "")
+            )
+
     def getprop(self, key: str) -> str:
         return self.shell_text(f"getprop {key}", check=False)
 
@@ -750,6 +780,21 @@ DEFAULT_ADBD_PATCH = {
         },
     ]
 }
+
+# A uid=0 adbd on this Android 4.4 build is not sufficient to remount
+# /system: the daemon does not retain the init process's CAP_SYS_ADMIN.  The
+# reference boot image therefore starts this helper from init, where it runs
+# with the full root capability set.  Keep this definition identical to the
+# service used by tools/build-boot-adbd-root-v2.py.
+PS202_INIT_SERVICE = b"""
+# PS202 privileged bootstrap: runs with full init caps after /system mounts.
+# Idempotent; failure is non-fatal (oneshot, no critical path).
+service ps202init /system/bin/sh /sbin/ps202-init.sh
+    class main
+    user root
+    group root system shell input graphics log sdcard_rw inet
+    oneshot
+""".strip(b"\n")
 
 
 def _hex_bytes(value: str, field: str) -> bytes:
@@ -925,6 +970,18 @@ def _build_newc(entries: List[tuple]) -> bytes:
     return bytes(out)
 
 
+def _ensure_ps202_init_service(init_rc: bytes) -> bytes:
+    """Register the privileged remount helper in the boot ramdisk init.rc."""
+    service_line = b"service ps202init /system/bin/sh /sbin/ps202-init.sh"
+    if service_line in init_rc:
+        return init_rc
+    if b"service ps202init " in init_rc:
+        raise InstallerError(
+            "boot ramdisk already defines ps202init with an unexpected command"
+        )
+    return init_rc.rstrip() + b"\n\n" + PS202_INIT_SERVICE + b"\n"
+
+
 def _boot_layout(data: bytes, region_length: Optional[int] = None) -> dict:
     """Validate an Android/MTK boot image and return its component offsets."""
     if len(data) < 40 or data[:8] != ANDROID_BOOT_MAGIC:
@@ -989,7 +1046,13 @@ def patch_boot_image_data(
     adbd_path = profile.get("boot_patch", {}).get("adbd_path", "sbin/adbd")
     find_path = profile.get("boot_patch", {}).get("find_path", "sbin/find")
     init_path = profile.get("boot_patch", {}).get("init_path", "sbin/ps202-init.sh")
-    found = {adbd_path: False, find_path: False, init_path: False}
+    init_rc_path = profile.get("boot_patch", {}).get("init_rc_path", "init.rc")
+    found = {
+        adbd_path: False,
+        find_path: False,
+        init_path: False,
+        init_rc_path: False,
+    }
     new_entries = []
     for name, mode, body in entries:
         if name == adbd_path:
@@ -1010,6 +1073,9 @@ def patch_boot_image_data(
             body = init_script
             mode = 0o100750
             found[name] = True
+        elif name == init_rc_path:
+            body = _ensure_ps202_init_service(body)
+            found[name] = True
         new_entries.append((name, mode, body))
 
     if not found[adbd_path]:
@@ -1018,6 +1084,8 @@ def patch_boot_image_data(
         new_entries.append((find_path, 0o100750, find_binary))
     if not found[init_path]:
         new_entries.append((init_path, 0o100750, init_script))
+    if not found[init_rc_path]:
+        raise InstallerError(f"live boot ramdisk is missing {init_rc_path}")
 
     compressed = gzip.compress(_build_newc(new_entries), compresslevel=9, mtime=0)
     new_ramdisk_size = layout["gzip_offset"] + len(compressed)
@@ -1682,7 +1750,12 @@ class VamanOSInstaller:
             raise InstallerError("device profile has no live boot backup paths")
         return backup, metadata
 
-    def save_boot_backup(self, source: Path, digest: str) -> None:
+    def save_boot_backup(
+        self,
+        source: Path,
+        digest: str,
+        allow_patched_repair: bool = False,
+    ) -> None:
         """Keep the exact pre-patch boot region on the user's SD card."""
         region = self._region("boot")
         if source.stat().st_size != region["length"]:
@@ -1697,6 +1770,11 @@ class VamanOSInstaller:
                 )
             existing_digest = sha256_file(existing)
             if existing_digest != digest:
+                if allow_patched_repair and self.classify_boot_image(source) == "PATCHED":
+                    self.msg(
+                        "  keeping the original boot backup while repairing the patched image"
+                    )
+                    return
                 raise InstallerError(
                     "the SD card already contains a boot backup from another image; "
                     "remove it only if it belongs to this handheld, then retry"
@@ -1874,14 +1952,18 @@ class VamanOSInstaller:
         """Backward-compatible alias for the version-aware boot patcher."""
         return self.prepare_boot_patch(via_runas=via_runas)
 
-    def prepare_boot_patch(self, via_runas: bool = False) -> tuple:
+    def prepare_boot_patch(
+        self, via_runas: bool = False, allow_patched_repair: bool = False
+    ) -> tuple:
         """Use a matching known image or safely patch the live image instead."""
         source = self.run_dir / "boot-before-vamanos.img"
         if via_runas:
             digest = self.read_readback_via_runas("boot", source)
         else:
             digest = self.read_current_region("boot", source)
-        self.save_boot_backup(source, digest)
+        self.save_boot_backup(
+            source, digest, allow_patched_repair=allow_patched_repair
+        )
 
         known = self.select_known_boot_patch(source, digest)
         if known is not None:
@@ -1977,8 +2059,9 @@ class VamanOSInstaller:
         self.adb.push(su, "/data/local/tmp/vamanos-su")
         # chown clears setuid/setgid on Android; set ownership first and the
         # 6755 mode last so su remains usable by non-root callers.
+        self.adb.remount_system_rw()
         self.adb.shell_text(
-            "mount -o rw,remount /system 2>/dev/null; cp -f /data/local/tmp/vamanos-su /system/xbin/su; chown 0:0 /system/xbin/su; chmod 6755 /system/xbin/su; sync"
+            "cp -f /data/local/tmp/vamanos-su /system/xbin/su; chown 0:0 /system/xbin/su; chmod 6755 /system/xbin/su; sync"
         )
         mode = self.adb.shell_text("ls -l /system/xbin/su 2>/dev/null", check=False)
         if not mode.startswith("-rwsr-sr-x"):
@@ -2003,8 +2086,8 @@ class VamanOSInstaller:
         self.adb.push(src, remote)
         mode = str(spec.get("mode", "0755"))
         owner = spec.get("owner", "0:0")
+        self.adb.remount_system_rw()
         self.adb.shell_text(
-            f"mount -o rw,remount /system 2>/dev/null; "
             f"cp -f {remote} {on_device}; chmod {mode} {on_device}; chown {owner} {on_device}; sync; echo done"
         )
 
@@ -2049,13 +2132,22 @@ class VamanOSInstaller:
 
         remote = "/data/local/tmp/vamanos-bootanimation.zip"
         self.adb.push(source, remote)
-        self.adb.shell(
-            f"mount -o rw,remount /system 2>/dev/null; "
+        self.adb.remount_system_rw()
+        result = self.adb.shell(
             f"cp -f {splash['path']} {splash['backup_path']} 2>/dev/null || true; "
             f"cp -f {remote} {splash['path']} && "
             f"chmod {splash['mode']} {splash['path']} && "
-            f"chown {splash['owner']} {splash['path']} && sync"
+            f"chown {splash['owner']} {splash['path']} && sync",
+            check=False,
         )
+        if result.returncode != 0:
+            detail = " ".join(
+                part.strip() for part in (result.stdout, result.stderr) if part.strip()
+            )
+            raise InstallerError(
+                "could not install Android boot splash"
+                + (f" (rc={result.returncode}: {detail})" if detail else "")
+            )
         self.verify_android_bootanimation()
 
     def verify_android_bootanimation(self) -> str:
@@ -2313,8 +2405,12 @@ class VamanOSInstaller:
 
     def install_retroarch_config(self, baseline: Path) -> None:
         """Merge the baseline cfg into the running shared config, preserving user bindings."""
+        app_storage = "/storage/sdcard0/Android/data/com.retroarch.ra32/files"
         cfg_path = (
-            "/storage/sdcard0/Android/data/com.retroarch.ra32/files/retroarch.cfg"
+            f"{app_storage}/retroarch.cfg"
+        )
+        self.adb.shell_text(
+            f"mkdir -p '{app_storage}/saves' '{app_storage}/states'"
         )
         local = self.run_dir / "retroarch.cfg"
         overlay = baseline.read_text(encoding="utf-8")
@@ -2913,7 +3009,9 @@ class VamanOSInstaller:
             if boot_mode == "temproot":
                 if root:
                     self.msg("[1/8] Live patching the device boot image...")
-                    patched, patched_digest = self.prepare_boot_patch()
+                    patched, patched_digest = self.prepare_boot_patch(
+                        allow_patched_repair=True
+                    )
                     self.write_region("boot", patched, {patched_digest})
                     self.verify_readback("boot", patched_digest)
                     self.adb.reboot()
@@ -2926,7 +3024,9 @@ class VamanOSInstaller:
                 root = True
             elif boot_mode == "force":
                 self.msg("[1/8] Live patching the device boot image...")
-                patched, patched_digest = self.prepare_boot_patch()
+                patched, patched_digest = self.prepare_boot_patch(
+                    allow_patched_repair=True
+                )
                 self.write_region("boot", patched, {patched_digest})
                 self.verify_readback("boot", patched_digest)
                 self.adb.reboot()

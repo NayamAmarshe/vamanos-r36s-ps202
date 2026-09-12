@@ -29,6 +29,8 @@ fi
 # write the file there during installation. It also never deletes core files.
 CFG=/storage/sdcard0/Android/data/com.retroarch.ra32/files/retroarch.cfg
 if [ -d /storage/sdcard1/retroarch/cores ]; then
+  mkdir -p /storage/sdcard0/Android/data/com.retroarch.ra32/files/saves \
+    /storage/sdcard0/Android/data/com.retroarch.ra32/files/states
   if [ -f "$CFG" ]; then
     echo "retroarch.cfg exists — preserving (user remaps survive)" >> "$LOG"
   else
@@ -37,6 +39,7 @@ if [ -d /storage/sdcard1/retroarch/cores ]; then
     echo 'libretro_directory = "/data/data/com.retroarch.ra32/cores/"'
     echo 'rgui_browser_directory = "/storage/sdcard1/roms/"'
     echo 'menu_driver = "ozone"'
+    echo 'ozone_menu_color_theme = "10"'
     echo 'video_threaded = "true"'
     echo 'audio_driver = "opensl"'
     echo 'input_driver = "android"'
@@ -46,7 +49,7 @@ if [ -d /storage/sdcard1/retroarch/cores ]; then
     echo 'content_show_history = "false"'
     echo 'video_vsync = "true"'
     echo 'savefile_directory = "/storage/sdcard0/Android/data/com.retroarch.ra32/files/saves"'
-    echo 'savestate_directory = "/storage/sdcard1/ps202/states"'
+    echo 'savestate_directory = "/storage/sdcard0/Android/data/com.retroarch.ra32/files/states"'
     echo 'screenshot_directory = "/storage/sdcard1/ps202/screenshots"'
     echo 'audio_latency = "96"'
     echo 'pcsx_rearmed_dynarec = "enabled"'

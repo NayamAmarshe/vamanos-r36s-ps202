@@ -71,6 +71,22 @@ and press Enter. This is the final yes before installation begins.
 Keep the cable connected until the installer says it is finished. The
 handheld reboots at the end to start vamanOS correctly.
 
+### Repairing an interrupted install after root ADB was enabled
+
+If an older installer stopped while replacing the Android boot animation with
+`Operation not permitted` from `/system`, do not use `splash` or
+`--boot-mode skip`. Use the repaired installer source/bundle and force one
+boot-image repair so the privileged `ps202init` service is added:
+
+```powershell
+.\install.ps1 --adb C:\path\to\adb.exe install --boot-mode force
+```
+
+The repair keeps the original boot backup already saved on the SD card. It
+reboots once, then the normal install continues. The installer now fails at
+the remount step with the actual mount state if `/system` is still not
+writeable.
+
 ## Update the installer
 
 After the first release has been unzipped, you can update the installer code

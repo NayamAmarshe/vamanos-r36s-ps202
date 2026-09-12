@@ -22,6 +22,7 @@
     "adbd_path": "sbin/adbd",
     "find_path": "sbin/find",
     "init_path": "sbin/ps202-init.sh",
+    "init_rc_path": "init.rc",
     "adbd": {
       "sites": [
         {
